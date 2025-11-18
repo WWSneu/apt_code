@@ -88,32 +88,32 @@ class PatchTokenizer(nn.Module):
         """
         masks = select_patches_by_threshold(importance_maps, thresholds=self.thresholds)
         batch_size = masks[self.base_patch_size].shape[0]
-        eval_logger.info(f"batch_size: {batch_size}")
+        # eval_logger.info(f"batch_size: {batch_size}")
         all_masks = []
         output_dict = {}
         
         # Set up output mask with class token (-1)
         device = importance_maps[self.base_patch_size].device
         temp_masks = [torch.ones((batch_size, 1), device=device) * -1]
-        eval_logger.info(f"temp_masks: {temp_masks}")
+        # eval_logger.info(f"temp_masks: {temp_masks}")
 
         seqlens = torch.ones((batch_size), device=device)
-        eval_logger.info(f"seqlens init: {seqlens}")
+        # eval_logger.info(f"seqlens init: {seqlens}")
         
         for idx in range(0, self.num_scales):
             cur_patch_size = self.base_patch_size * 2 ** idx
             temp_mask = masks[cur_patch_size].flatten(1)
-            eval_logger.info(f"temp_mask for patch size {cur_patch_size}: {temp_mask.sum(1)}")
+            # eval_logger.info(f"temp_mask for patch size {cur_patch_size}: {temp_mask.sum(1)}")
             seqlens += temp_mask.sum(1)
             temp_masks.append(temp_mask * (idx + 1))
 
         output_mask = torch.cat(temp_masks, dim=1)
-        eval_logger.info(f"output_mask before filtering: {output_mask}")
+        # eval_logger.info(f"output_mask before filtering: {output_mask}")
         output_mask = output_mask[output_mask != 0]
-        eval_logger.info(f"output_mask after filtering: {output_mask}")
-        eval_logger.info(f"seqlens before int: {seqlens}")
+        # eval_logger.info(f"output_mask after filtering: {output_mask}")
+        # eval_logger.info(f"seqlens before int: {seqlens}")
         seqlens = seqlens.int().tolist()
-        eval_logger.info(f"seqlens after int: {seqlens}")
+        # eval_logger.info(f"seqlens after int: {seqlens}")
 
         return masks, output_mask, seqlens
 
@@ -141,12 +141,12 @@ class PatchTokenizer(nn.Module):
         B = images.shape[0]
 
         for idx in range(0, self.num_scales):
-            eval_logger.info(f"id: {idx}")
+            # eval_logger.info(f"id: {idx}")
 
             cur_patch_size = self.base_patch_size * 2 ** idx
             cur_mask = masks[cur_patch_size].bool()
 
-            eval_logger.info(f"cur_mask for patch size {cur_patch_size} shape: {cur_mask.shape}, cur_mask {cur_mask}")
+            # eval_logger.info(f"cur_mask for patch size {cur_patch_size} shape: {cur_mask.shape}, cur_mask {cur_mask}")
             
             # cur_pos_embed = pos_embeds[str(cur_patch_size)]
             # cur_pos_embed = cur_pos_embed[:, 1:].repeat(B, 1, 1)
@@ -162,7 +162,7 @@ class PatchTokenizer(nn.Module):
             padded_image = torch.nn.functional.pad(images, (0, pad_w, 0, pad_h), mode='constant', value=0)
             scale_img = padded_image
 
-            eval_logger.info(f"padded_image shape: {padded_image.shape}")
+            # eval_logger.info(f"padded_image shape: {padded_image.shape}")
 
             if idx > 0:
                 scale_img = F.interpolate(
@@ -171,7 +171,7 @@ class PatchTokenizer(nn.Module):
                     mode="bilinear"
                 )
 
-                eval_logger.info(f"scale_img shape after interpolation: {scale_img.shape}")
+                # eval_logger.info(f"scale_img shape after interpolation: {scale_img.shape}")
 
                 constituent_patches = einops.rearrange(
                     padded_image,
@@ -184,33 +184,33 @@ class PatchTokenizer(nn.Module):
                     p4=self.base_patch_size
                 )
 
-                eval_logger.info(f"constituent_patches shape: {constituent_patches.shape}")
+                # eval_logger.info(f"constituent_patches shape: {constituent_patches.shape}")
                 
                 # eval_logger.info(f"constituent_patches: {constituent_patches}")
-                eval_logger.info(f"cur_mask shape: {cur_mask.shape}")
-                eval_logger.info(f"cur_mask: {cur_mask}")
+                # eval_logger.info(f"cur_mask shape: {cur_mask.shape}")
+                # eval_logger.info(f"cur_mask: {cur_mask}")
 
                 selected_constituent_patches = constituent_patches[cur_mask]
                 output_dict[f"full_patches_{cur_patch_size}"] = selected_constituent_patches
-                eval_logger.info(f"full_patches {cur_patch_size} shape: {selected_constituent_patches.shape}")
+                # eval_logger.info(f"full_patches {cur_patch_size} shape: {selected_constituent_patches.shape}")
             scaled_patches = einops.rearrange(
                 scale_img, 
                 "b c (h p1) (w p2) -> b h w c p1 p2",
                 p1=self.base_patch_size,
                 p2=self.base_patch_size
             )
-            eval_logger.info(f"scaled_patches shape: {scaled_patches.shape}")
+            # eval_logger.info(f"scaled_patches shape: {scaled_patches.shape}")
             # eval_logger.info(f"scaled_patches: {scaled_patches}")
 
             selected_patches = scaled_patches[masks[cur_patch_size].bool()]
 
-            eval_logger.info(f"selected_patches shape: {selected_patches.shape}")
+            # eval_logger.info(f"selected_patches shape: {selected_patches.shape}")
             # eval_logger.info(f"selected_patches: {selected_patches}")
             output_dict[f"resized_patches_{cur_patch_size}"] = selected_patches
             # eval_logger.info(f"resized_patches stored for patch size {cur_patch_size}")
             flat_mask = masks[cur_patch_size].flatten(1).bool()
             output_dict[f"pos_embed_mask_{cur_patch_size}"] = flat_mask
-            eval_logger.info(f"pos_embed_mask shape: {flat_mask.shape}")
+            # eval_logger.info(f"pos_embed_mask shape: {flat_mask.shape}")
 
         #output_dict["pos_embed_cls_token"] = pos_embeds[str(self.base_patch_size)][:, 0]
         return output_dict

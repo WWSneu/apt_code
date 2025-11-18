@@ -173,8 +173,8 @@ class Qwen2VLProcessor(ProcessorMixin):
                     # num_image_tokens = image_grid_thw[index].prod() // merge_length
                     # num_image_tokens = 
                     # eval_logger.info("num_image_tokens: {}", num_image_tokens)
-                    eval_logger.info("image_grid_thw[index].prod(): {}", image_grid_thw[index].prod())
-                    eval_logger.info("merge_length: {}", merge_length)
+                    # eval_logger.info("image_grid_thw[index].prod(): {}", image_grid_thw[index].prod())
+                    # eval_logger.info("merge_length: {}", merge_length)
                     cnt = {1:0, 2:0, 3:0}
                     # eval_logger.info("output_dict[0]: {}", output_dict[0])
                     for j in range(output_dict[0][0].shape[0]):
@@ -186,9 +186,9 @@ class Qwen2VLProcessor(ProcessorMixin):
                             elif output_dict[0][0][j, k].item() == 3:
                                 cnt[3] += 1
                     sum = cnt[1] + cnt[2]/4 + cnt[3]/16
-                    
+                    sum = sum - (sum%4)
                     num_image_tokens = int(sum // merge_length)
-                    eval_logger.info("num_image_tokens: {}", num_image_tokens)
+                    # eval_logger.info("num_image_tokens: {}", num_image_tokens)
                     text[i] = text[i].replace(self.image_token, "<|placeholder|>" * num_image_tokens, 1)
                     index += 1
                 text[i] = text[i].replace("<|placeholder|>", self.image_token)

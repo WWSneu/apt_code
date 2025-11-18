@@ -222,7 +222,7 @@ def select_patches_by_threshold(entropy_maps, thresholds, alpha=1.):
         
         # Create mask for current patch size
         masks[current_size] = (entropy_maps[current_size] < threshold).float()
-        eval_logger.info(f"patch{current_size}: {masks[current_size]}")
+        # eval_logger.info(f"patch{current_size}: {masks[current_size]}")
 
     for i in range(len(patch_sizes)-1, 0, -1):
         current_size = patch_sizes[i]
@@ -250,7 +250,7 @@ def select_patches_by_threshold(entropy_maps, thresholds, alpha=1.):
         H_small, W_small = entropy_maps[smaller_size].shape[1:]  # Assuming batch dimension
         mask_upscaled = mask_upscaled[:, :H_small, :W_small]
         masks[0] = masks[0] + i * mask_upscaled
-    eval_logger.info("Final combined mask: {}", masks[0])
+    # eval_logger.info("Final combined mask: {}", masks[0])
     return masks
 
 def visualize_selected_patches_cv2(

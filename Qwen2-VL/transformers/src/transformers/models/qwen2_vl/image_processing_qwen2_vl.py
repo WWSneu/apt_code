@@ -292,7 +292,7 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             image = to_channel_dimension_format(image, data_format, input_channel_dim=input_data_format)
             processed_images.append(image)
 
-        eval_logger.info(f"processed_images shape: {np.array(processed_images).shape}")
+        # eval_logger.info(f"processed_images shape: {np.array(processed_images).shape}")
         patches = processed_images
         # patches.to(device)
         pt= PatchTokenizer(
@@ -307,8 +307,8 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         patches = torch.from_numpy(patches).to(device)        # torch.set_printoptions(threshold=10000, linewidth=200)  # threshold 设置显示元素数量，linewidth 设置行宽
         pt.to(device)
         batch_maps = pt.compute_importance_maps(patches)
-        eval_logger.info(f"Computed batch_maps 14: {batch_maps[14]}, Computed batch_maps 28: {batch_maps[28]}, Computed batch_maps 56: {batch_maps[56]}")
-        eval_logger.info(f"batch_maps 14 shape: {batch_maps[14].shape}, batch_maps 28 shape: {batch_maps[28].shape}, batch_maps 56 shape: {batch_maps[56].shape}")
+        # eval_logger.info(f"Computed batch_maps 14: {batch_maps[14]}, Computed batch_maps 28: {batch_maps[28]}, Computed batch_maps 56: {batch_maps[56]}")
+        # eval_logger.info(f"batch_maps 14 shape: {batch_maps[14].shape}, batch_maps 28 shape: {batch_maps[28].shape}, batch_maps 56 shape: {batch_maps[56].shape}")
         # output = []
         
         masks, _, seqlens = pt.construct_masks(batch_maps)
@@ -352,7 +352,7 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         # self.cnt += 1
 
         patches = np.array(processed_images)
-        eval_logger.info(f"patchs shape patches = np.array(processed_images): {patches.shape}")
+        # eval_logger.info(f"patchs shape patches = np.array(processed_images): {patches.shape}")
         if data_format == ChannelDimension.LAST:
             patches = patches.transpose(0, 3, 1, 2)
         if patches.shape[0] % temporal_patch_size != 0:
@@ -360,9 +360,9 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
                 patches[-1][np.newaxis], temporal_patch_size - (patches.shape[0] % temporal_patch_size), axis=0
             )
             patches = np.concatenate([patches, repeats], axis=0)
-        eval_logger.info(f"patches shape repeats = np.repeat(: {patches.shape}")
+        # eval_logger.info(f"patches shape repeats = np.repeat(: {patches.shape}")
 
-        eval_logger.info(f"masks shape before reshape: {masks[0].shape}")
+        # eval_logger.info(f"masks shape before reshape: {masks[0].shape}")
 
         channel = patches.shape[1]
         grid_t = patches.shape[0] // temporal_patch_size
@@ -378,7 +378,7 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             merge_size,
             patch_size,
         )
-        eval_logger.info(f"masks before: {masks[0]}")
+        # eval_logger.info(f"masks before: {masks[0]}")
         masks[0] = masks[0].squeeze(0)
         cnt = {1:0, 2:0, 3:0}
         for i in range(masks[0].shape[0]):
@@ -389,10 +389,10 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
                     cnt[2] += 1
                 elif masks[0][i, j].item() == 3:
                     cnt[3] += 1
-        for i in range(3):
-            eval_logger.info(f"mask num {i+1} count: {cnt[i+1]}")
+        # for i in range(3):
+        #     eval_logger.info(f"mask num {i+1} count: {cnt[i+1]}")
         sum = int(cnt[1] + cnt[2]/4 + cnt[3]/16)
-        eval_logger.info(f"sum in imageprocessor: {sum}")
+        # eval_logger.info(f"sum in imageprocessor: {sum}")
         masks[1] = masks[0].reshape(
             grid_t,
             1,
@@ -404,9 +404,9 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             merge_size,
             1,
         )
-        eval_logger.info(f"masks shape after reshape: {masks[0].shape}")
+        # eval_logger.info(f"masks shape after reshape: {masks[0].shape}")
         # eval_logger.info(f"masks after: {masks[0]}")
-        eval_logger.info(f"patches shape after reshape: {patches.shape}")
+        # eval_logger.info(f"patches shape after reshape: {patches.shape}")
         patches = patches.transpose(0, 3, 6, 4, 7, 2, 1, 5, 8)
         flatten_patches = patches.reshape(
             grid_t * grid_h * grid_w, channel * temporal_patch_size * patch_size * patch_size
@@ -416,19 +416,22 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         masks[1] = masks[1].reshape(
             grid_t * grid_h * grid_w, 1
         )
-        eval_logger.info(f"flatten_patches shape: {flatten_patches.shape}")
-        eval_logger.info(f"flatten_masks0 shape: {masks[0].shape}")
+        # eval_logger.info(f"flatten_patches shape: {flatten_patches.shape}")
+        # eval_logger.info(f"flatten_masks0 shape: {masks[0].shape}")
         # eval_logger.info(f"flatten_patches: {flatten_patches}")
         # eval_logger.info(f"flatten_masks0: {masks[0]}")
+        sum = sum - (sum%4)
         total = sum
-        eval_logger.info("total patches after merge: {}", total)
+        eval_logger.info("sum in imageprocessor: {}", sum)
+        # flatten_patches = flatten_patches[:sum, :]
+        # eval_logger.info("total patches after merge: {}", total)
         factors = []
         for i in range(1, int(math.sqrt(total)) + 1):
             if total % i == 0:
                 h, w = i, total // i 
                 factors.append((h, w))
-        # even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
-        best_pair = min(factors, key=lambda x: abs(x[0] - x[1]))
+        even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
+        best_pair = min(even_factors, key=lambda x: abs(x[0] - x[1]))
         height, width = best_pair
     
         # 返回 [1, h, w]

@@ -203,42 +203,42 @@ class Qwen2_VL(lmms):
             # The current logic might incorrectly discard all visuals if one doc lacks them.
             # Ensure flatten is appropriate here based on doc_to_visual's return type.
             visual_list = [doc_to_visual[0](self.task_dict[task][split][ids]) for ids in doc_id]
-            for i, ids in enumerate(doc_id):
-                sample = self.task_dict[task][split][ids]
-                eval_logger.info(f"[{i}] doc_id={ids}, keys={list(sample.keys())}")
-                if "image" in sample:
-                    eval_logger.info(f"  image field: {sample['image']}")
-                elif "image_path" in sample:
-                    eval_logger.info(f"  image_path: {sample['image_path']}")
-                elif "image_id" in sample:
-                    eval_logger.info(f"  image_id: {sample['image_id']}")
-            for i, ids in enumerate(doc_id):
-                sample = self.task_dict[task][split][ids]
-                img = sample.get("image", None)
+            # for i, ids in enumerate(doc_id):
+            #     sample = self.task_dict[task][split][ids]
+            #     eval_logger.info(f"[{i}] doc_id={ids}, keys={list(sample.keys())}")
+            #     if "image" in sample:
+            #         eval_logger.info(f"  image field: {sample['image']}")
+            #     elif "image_path" in sample:
+            #         eval_logger.info(f"  image_path: {sample['image_path']}")
+            #     elif "image_id" in sample:
+            #         eval_logger.info(f"  image_id: {sample['image_id']}")
+            # for i, ids in enumerate(doc_id):
+            #     sample = self.task_dict[task][split][ids]
+            #     img = sample.get("image", None)
 
-                # 样本编号（最直接）
-                eval_logger.info(f"[{i}] doc_id={ids} index={sample.get('index')} category={sample.get('category')} l2={sample.get('l2_category')}")
+            #     # 样本编号（最直接）
+            #     eval_logger.info(f"[{i}] doc_id={ids} index={sample.get('index')} category={sample.get('category')} l2={sample.get('l2_category')}")
 
-                # 如果 PIL 是从文件载入，JpegImageFile 通常带有 .filename
-                if isinstance(img, Image.Image):
-                    path = getattr(img, "filename", None)  # 若是从 bytes 创建的，就可能为 None
-                    eval_logger.info(f"  image: type={type(img).__name__} size={img.size} path={path}")
-            if isinstance(img, Image.Image):
-                save_path = f"/data/wangwensong/dev/lmms-eval/lmms_eval/pics/idxs/{task}_{split}_doc{ids}_idx{sample.get('index')}.jpg"
-                try:
-                    img.save(save_path)
-                    eval_logger.info(f"  saved to: {save_path}")
-                except Exception as e:
-                    eval_logger.warning(f"  save failed: {e}")
+            #     # 如果 PIL 是从文件载入，JpegImageFile 通常带有 .filename
+            #     if isinstance(img, Image.Image):
+            #         path = getattr(img, "filename", None)  # 若是从 bytes 创建的，就可能为 None
+            #         eval_logger.info(f"  image: type={type(img).__name__} size={img.size} path={path}")
+            # if isinstance(img, Image.Image):
+            #     save_path = f"/data/wangwensong/dev/lmms-eval/lmms_eval/pics/idxs/{task}_{split}_doc{ids}_idx{sample.get('index')}.jpg"
+            #     try:
+            #         img.save(save_path)
+            #         eval_logger.info(f"  saved to: {save_path}")
+            #     except Exception as e:
+            #         eval_logger.warning(f"  save failed: {e}")
         
-            eval_logger.info(f"Visual list before flattening: {visual_list}")
+            # eval_logger.info(f"Visual list before flattening: {visual_list}")
             if None in visual_list:  # This check might need refinement
                 # If a mix of visual/non-visual is possible, this needs careful handling
                 # Currently sets all visuals to empty if any doc returns None
                 visual_list = []
             else:
                 visual_list = self.flatten(visual_list)  # Assumes doc_to_visual returns list of lists
-            eval_logger.info(f"Visual list after flattening: {visual_list}")
+            # eval_logger.info(f"Visual list after flattening: {visual_list}")
             gen_kwargs = all_gen_kwargs[0] if all_gen_kwargs else {}
 
             # Set default values for until and max_new_tokens
@@ -353,7 +353,7 @@ class Qwen2_VL(lmms):
             # TODO: Consider moving video frame sampling logic into process_vision_info or a helper.
             image_inputs, video_inputs = process_vision_info(batched_messages)
             
-            eval_logger.info(f"image inputs before frame sampling: {image_inputs}")
+            # eval_logger.info(f"image inputs before frame sampling: {image_inputs}")
             # for i, img in enumerate(image_inputs):
             #     eval_logger.info(f"[Image {i}] mode={img.mode}, size={img.size}")
             if video_inputs is not None and len(video_inputs) > 0 and video_inputs[0] is not None:
@@ -382,12 +382,12 @@ class Qwen2_VL(lmms):
 
             inputs, output_dict, images_output, grid_new_thw = self.processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
             # inputs = {k: torch.from_numpy(v).to(self.device) if isinstance(v, np.ndarray) else v for k, v in inputs.items()}
-            eval_logger.info(f"inputs keys: {list(inputs.keys())}")
+            # eval_logger.info(f"inputs keys: {list(inputs.keys())}")
             if self.device_map == "auto":
                 inputs = inputs.to("cuda")  # Assuming 'cuda' is the target for 'auto' on single GPU
             else:
                 inputs = inputs.to(self.device)
-            eval_logger.info(f"grid_new_thw: {grid_new_thw}")
+            # eval_logger.info(f"grid_new_thw: {grid_new_thw}")
             # eval_logger.info(f"output_dict: {output_dict}")
             # eval_logger.info(f"images: {images_output}")
 
@@ -401,9 +401,10 @@ class Qwen2_VL(lmms):
             current_gen_kwargs = {**default_gen_kwargs, **gen_kwargs}  # Provided gen_kwargs override defaults
 
             pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
-            for item in inputs:
-                eval_logger.info("image_inputs item: {}", item)
-                eval_logger.info("image_inputs item shape: {}", inputs[item].shape)
+            # for item in inputs:
+            #     eval_logger.info("image_inputs item: {}", item)
+            #     eval_logger.info("image_inputs item shape: {}", inputs[item].shape)
+            eval_logger.info("model_generate start here")
             cont = self.model.generate(
                 **inputs,
                 output_dict=output_dict,
@@ -416,8 +417,9 @@ class Qwen2_VL(lmms):
                 num_beams=current_gen_kwargs["num_beams"],
                 max_new_tokens=current_gen_kwargs["max_new_tokens"],
                 use_cache=self.use_cache,
+                grid_new_thw=grid_new_thw,
             )
-
+            eval_logger.info("model_generate end here")
             # Decode generated sequences, excluding input tokens
             generated_ids_trimmed = []
             for in_ids, out_ids in zip(inputs.input_ids, cont):

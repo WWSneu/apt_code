@@ -251,9 +251,9 @@ class PatchEmbed(nn.Module):
         hidden_states = hidden_states.view(
             -1, self.in_channels, self.temporal_patch_size, self.patch_size, self.patch_size
         )
-        eval_logger.info(f"after view hidden_states shape: {hidden_states.shape}")
+        # eval_logger.info(f"after view hidden_states shape: {hidden_states.shape}")
         hidden_states = self.proj(hidden_states.to(dtype=target_dtype)).view(-1, self.embed_dim)
-        eval_logger.info(f"after proj hidden_states shape: {hidden_states.shape}")
+        # eval_logger.info(f"after proj hidden_states shape: {hidden_states.shape}")
         return hidden_states
 
 
@@ -269,7 +269,11 @@ class PatchMerger(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.mlp(self.ln_q(x).view(-1, self.hidden_size))
+        # eval_logger.info(f"PatchMerger input x shape: {x.shape}")
+        # x = self.mlp(self.ln_q(x).view(-1, self.hidden_size))
+        x = self.ln_q(x)
+        x = x.contiguous().view(-1, self.hidden_size)
+        x = self.mlp(x)
         return x
 
 
@@ -904,26 +908,28 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         #                     output_dict[0][0][0][m, n] = 0  # 标记为已处理
         #             patch_merged.append(sum_patch / 4)
         # eval_logger.info()
-        eval_logger.info("hidden_states type: {}", type(hidden_states))
-        eval_logger.info("patch_merged length: {}", len(patch_merged))
-        patch_merged = torch.cat(patch_merged, dim=0)
-        eval_logger.info("patch_merged type: {}", type(patch_merged))
-        hidden_states = self.patch_embed(patch_merged)
-        eval_logger.info("after patch_embed hidden_states shape: {}", hidden_states.shape)
+        # eval_logger.info("hidden_states type: {}", type(hidden_states))
+        # eval_logger.info("patch_merged length: {}", len(patch_merged))
         
+        # patch_merged = [:]
+        patch_merged = torch.cat(patch_merged, dim=0)
+        
+        hidden_states = self.patch_embed(patch_merged)
+        # eval_logger.info("after patch_embed hidden_states shape: {}", hidden_states.shape)
+        hidden_states = hidden_states[:hidden_states.shape[0] - (hidden_states.shape[0] % 4)]
         # eval_logger.info("hidden_states:{}", hidden_states)
 
        
 
         rotary_pos_emb = self.rot_pos_emb(grid_thw, output_dict)
-        eval_logger.info("rotary_pos_emb: {}", rotary_pos_emb.shape)
+        # eval_logger.info("rotary_pos_emb: {}", rotary_pos_emb.shape)
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
         # eval_logger.info("emb: {}", emb.shape)
         position_embeddings = (emb.cos(), emb.sin())
         # eval_logger.info("position_embedings shape: {}",position_embeddings.)
         # position_embeddings = torch.cat(position_embeddings, dim=0)
         # eval_logger.info("position_embeddings shape: {}", position_embeddings.shape)
-        eval_logger.info("position_embeddings types: {}, {}", type(position_embeddings[0]), type(position_embeddings[1]))
+        # eval_logger.info("position_embeddings types: {}, {}", type(position_embeddings[0]), type(position_embeddings[1]))
         masks = copy.deepcopy(output_dict[0])        
         position_embeddings_merged = [[], []]
         position_embeddings = list(position_embeddings)
@@ -1043,16 +1049,18 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
                 position_embeddings_merged[0].append(sum0 / 16)
                 position_embeddings_merged[1].append(sum1 / 16)
 
-        eval_logger.info("position_embeddings_merged : {}", (len(position_embeddings_merged[0]), len(position_embeddings_merged[1])))
+        # eval_logger.info("position_embeddings_merged : {}", (len(position_embeddings_merged[0]), len(position_embeddings_merged[1])))
         position_embeddings_merged = (torch.stack(position_embeddings_merged[0], dim=0), torch.stack(position_embeddings_merged[1], dim=0))
+        position_embeddings_merged = (position_embeddings_merged[0][:position_embeddings_merged[0].shape[0] - (position_embeddings_merged[0].shape[0] % 4)], position_embeddings_merged[1][:position_embeddings_merged[1].shape[0] - (position_embeddings_merged[1].shape[0] % 4)])
         # position_embeddings_merged = torch.stack(position_embeddings_merged, dim=0)
-        # eval_logger.info("after patch merge position_embeddings_merged shape: {}", position_embeddings_merged.shape)
         # cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
         # position_embeddings = torch.cat(position_embeddings, dim=0)
-        eval_logger.info("grid_thw: {}", grid_thw)
-        eval_logger.info("grid_thw_shape: {}", grid_thw.shape)
-        eval_logger.info("grid_thw dtype: {}", grid_thw.dtype)
+        # eval_logger.info("grid_thw: {}", grid_thw)
+        # eval_logger.info("grid_thw_shape: {}", grid_thw.shape)
+        # eval_logger.info("grid_thw dtype: {}", grid_thw.dtype)
+        # position_embeddings_merged = position_embeddings_merged[]
         total = hidden_states.shape[0]
+        # eval_logger.info("total patches after merge: {}", total)
         eval_logger.info("total patches after merge: {}", total)
         factors = []
         for i in range(1, int(math.sqrt(total)) + 1):
@@ -1062,10 +1070,13 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
         best_pair = min(even_factors, key=lambda x: abs(x[0] - x[1]))
         height, width = best_pair
-    
+        
         # 返回 [1, h, w]
         grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=grid_thw.device).unsqueeze(0)
-        eval_logger.info("grid_thw new shape: {}, grid_thw: {}", grid_new_thw.shape, grid_new_thw)
+        eval_logger.info(f"hidden_states shape:{hidden_states.shape}")
+        eval_logger.info("grid_new_thw: {}", grid_new_thw)
+        eval_logger.info("grid_thw_original: {}", grid_thw)
+        # eval_logger.info("grid_thw new shape: {}, grid_thw: {}", grid_new_thw.shape, grid_new_thw)
     # return grid_thw
         cu_seqlens = torch.repeat_interleave(torch.tensor([len(position_embeddings_merged[0])], device=emb.device), grid_new_thw[:, 0]).cumsum(
             dim=0,
@@ -1075,9 +1086,9 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
             # See https://github.com/huggingface/transformers/pull/34852 for more information
             dtype=grid_new_thw.dtype if torch.jit.is_tracing() else torch.int32,
         )
-        eval_logger.info("cu_seqlens: {}", cu_seqlens)
+        # eval_logger.info("cu_seqlens: {}", cu_seqlens)
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
-        eval_logger.info("padded cu_seqlens: {}", cu_seqlens)
+        # eval_logger.info("padded cu_seqlens: {}", cu_seqlens)
 
         for blk in self.blocks:
             hidden_states = blk(
@@ -1086,7 +1097,7 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
                 position_embeddings=position_embeddings_merged,
                 **kwargs,
             )
-        eval_logger.info("after blocks hidden_states shape: {}", hidden_states.shape)
+        # eval_logger.info("after blocks hidden_states shape: {}", hidden_states.shape)
         return self.merger(hidden_states), grid_new_thw
         # return hidden_states
 
@@ -1333,6 +1344,8 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             position_ids (`torch.LongTensor` of shape `(3, batch_size, sequence_length)`)
             mrope_position_deltas (`torch.Tensor` of shape `(batch_size)`)
         """
+        eval_logger.info(f"input_ids shape:{input_ids.shape}, image_grid_thw shape:{image_grid_thw.shape},  attention_mask shape:{attention_mask.shape}")
+        eval_logger.info(f"image_grid_thw:{image_grid_thw}")
         spatial_merge_size = self.config.vision_config.spatial_merge_size
         image_token_id = self.config.image_token_id
         video_token_id = self.config.video_token_id
@@ -1384,16 +1397,17 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
                         video_index += 1
                         remain_videos -= 1
                         ed = ed_video
-                    # llm_grid_t, llm_grid_h, llm_grid_w = (
-                    #     t.item(),
-                    #     h.item() // spatial_merge_size,
-                    #     w.item() // spatial_merge_size,
-                    # )
                     llm_grid_t, llm_grid_h, llm_grid_w = (
                         t.item(),
-                        h.item(),
-                        w.item(),
+                        h.item() // spatial_merge_size,
+                        w.item() // spatial_merge_size,
                     )
+                    eval_logger.info(f"spatial_merge_size:{spatial_merge_size}")
+                    # llm_grid_t, llm_grid_h, llm_grid_w = (
+                    #     t.item(),
+                    #     h.item(),
+                    #     w.item(),
+                    # )
 
                     text_len = ed - st
 
@@ -1404,7 +1418,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
                     h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
                     w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
                     pos = torch.stack([t_index, h_index, w_index])
-                    
+                    eval_logger.info(f"pos shape:{pos.shape}, pos:{pos}")
                     llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
                     st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 
@@ -1414,6 +1428,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
                     llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
                 llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
+                eval_logger.info(f"llm_positions shape:{llm_positions.shape}, llm_positions:{llm_positions}")
                 position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
                 mrope_position_deltas.append(llm_positions.max() + 1 - len(total_input_ids[i]))
             mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
@@ -1476,7 +1491,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         # eval_logger.info("output_dict keys: {}", output_dict[0].keys() if output_dict is not None else None)
         # # Reshape pixel_values to 2D grid (height, width, embed)
         pixel_values = pixel_values.type(self.visual.dtype)
-        eval_logger.info("pixel_values shape: {}", pixel_values.shape)
+        # eval_logger.info("pixel_values shape: {}", pixel_values.shape)
         
 
         # eval_logger.info("patch_merged length: {}, patch_merged: {}", len(patch_merged), patch_merged)
@@ -1522,11 +1537,11 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         # current_num = patch_merged.shape[0]
         # adjusted_grid_thw = torch.tensor([[1, 1, current_num]], device=image_grid_thw.device, dtype=image_grid_thw.dtype)
         # self.visual.merger.spatial_merge_size = 1
-        eval_logger.info(f"pixel_values shape: {pixel_values.shape}")
-        eval_logger.info(f"pixel_values: {pixel_values}")
+        # eval_logger.info(f"pixel_values shape: {pixel_values.shape}")
+        # eval_logger.info(f"pixel_values: {pixel_values}")
 
         image_embeds, grid_new_thw = self.visual(pixel_values, grid_thw=image_grid_thw, output_dict=output_dict)
-        eval_logger.info("image_embeds shape: {}", image_embeds.shape)
+        # eval_logger.info("image_embeds shape: {}", image_embeds.shape)
         # self.visual.merger.spatial_merge_size = 2
         # eval_logger.info("pixel_values : {}, pixel_values.shape: {}", pixel_values, pixel_values.shape)
         # pixel_values = pixel_values.type(self.visual.dtype)
@@ -1551,9 +1566,10 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         # return image_embeds
         # image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
         # split_sizes = (image_grid_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
-        eval_logger.info("image_embeds shape[0]: {}", image_embeds.shape[0])
+        # eval_logger.info("image_embeds shape[0]: {}", image_embeds.shape[0])
         a = torch.tensor(image_embeds.shape[0], device=image_embeds.device)
-        split_sizes = (a//self.visual.spatial_merge_size**2).tolist()
+        # split_sizes = (a//self.visual.spatial_merge_size**2).tolist()
+        split_sizes = [a.item()]
         image_embeds = torch.split(image_embeds, split_sizes)
         return image_embeds, grid_new_thw
 
@@ -1649,12 +1665,12 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             #         [[1, 1, n] for n in self.visual.last_token_lengths],
             #         device=device, dtype=torch.long
             #     )
-            eval_logger.info("pixel_values before get_image_features: {}", pixel_values.shape)
+            # eval_logger.info("pixel_values before get_image_features: {}", pixel_values.shape)
             image_embeds, image_grid_new_thw = self.get_image_features(pixel_values, image_grid_thw, output_dict, images_output)
             image_grid = image_grid_new_thw
-            eval_logger.info("image_embeds shape after get_image_features: {}", image_embeds[0].shape)
-            for i, emb in enumerate(image_embeds):
-                eval_logger.info("image_embeds[{}] shape: {}", i, emb.shape)
+            # eval_logger.info("image_embeds shape after get_image_features: {}", image_embeds[0].shape)
+            # for i, emb in enumerate(image_embeds):
+                # eval_logger.info("image_embeds[{}] shape: {}", i, emb.shape)
             image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
             image_mask, _ = self.get_placeholder_mask(
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
@@ -1670,7 +1686,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
         if position_ids is None:
-            eval_logger.info("image_grid: {}", image_grid)
+            # eval_logger.info("image_grid: {}", image_grid)
             if self.rope_deltas is None or cache_position is None or cache_position[0] == 0:
                 position_ids, rope_deltas = self.get_rope_index(
                     input_ids, image_grid, video_grid_thw, attention_mask, output_dict=output_dict
@@ -1820,7 +1836,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "The image shows a street scene with a red stop sign in the foreground. In the background, there is a large red gate with Chinese characters ..."
         ```"""
-
+        eval_logger.info(f"generation forward start here")
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1855,6 +1871,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                 logits=logits, labels=labels, vocab_size=self.config.text_config.vocab_size, **kwargs
             )
 
+        eval_logger.info(f"generation forward end here")
         return Qwen2VLCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
@@ -1877,7 +1894,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         pixel_values_videos=None,
         image_grid_thw=None,
         video_grid_thw=None,
-        image_grid_thw_new: Optional[dict] = None,
+        grid_new_thw: Optional[dict] = None,
         **kwargs,
     ):
         # Overwritten -- in specific circumstances we don't want to forward image inputs to the model
@@ -1899,7 +1916,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
 
         # Qwen2-VL position_ids are prepareed with rope_deltas in forward
         if position_ids is None:
-            eval_logger.info("prepare_inputs_for_generation called with image_grid_thw: {}", image_grid_thw)
+            # eval_logger.info("prepare_inputs_for_generation called with image_grid_thw: {}", image_grid_thw)
             # Calculate RoPE index once per generation in the pre-fill stage only.
             # When compiling, we can't check tensor values thus we check only input length
             # It is safe to assume that `length!=1` means we're in pre-fill because compiled
@@ -1913,12 +1930,18 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                 or (past_key_values is None or past_key_values.get_seq_length() == 0)
             )
             if (prefill_compiled_stage or prefill_noncompiled_stage) or self.model.rope_deltas is None:
+                eval_logger.info("start")
+                eval_logger.info(f"grid_new_thw: {grid_new_thw is not None} before filter")
+                if grid_new_thw is not None:
+                    image_grid_thw = grid_new_thw
+                eval_logger.info(f"grid_new_thw: {grid_new_thw} after filter")
                 vision_positions, rope_deltas = self.model.get_rope_index(
                     model_inputs.get("input_ids", None),
                     image_grid_thw=image_grid_thw,
                     video_grid_thw=video_grid_thw,
                     attention_mask=attention_mask,
                 )
+                eval_logger.info("end")
                 self.model.rope_deltas = rope_deltas
             # then use the prev pre-calculated rope-deltas to get the correct position ids
             elif "position_ids" in model_inputs:

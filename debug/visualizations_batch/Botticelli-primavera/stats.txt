@@ -1,0 +1,11 @@
+Image Statistics
+================
+Image: Botticelli-primavera.jpg
+Original size (W,H): 2560,1682
+Resized size (W,H): 1232,812
+Patch size: 14
+Grid patches: 58 x 88 = 5104
+Retained patches per image (excluding class token): [5104]
+Retained total (excluding cls): 5104
+Retained ratio: 100.0%
+Per-scale selected: {14: 5104, 56: 0, 28: 0, 0: 5104}

@@ -1,0 +1,11 @@
+Image Statistics
+================
+Image: apt.jpg
+Original size (W,H): 1536,672
+Resized size (W,H): 1512,644
+Patch size: 14
+Grid patches: 46 x 108 = 4968
+Retained patches per image (excluding class token): [4611]
+Retained total (excluding cls): 4611
+Retained ratio: 92.814%
+Per-scale selected: {14: 4572, 56: 20, 28: 19, 0: 5684}

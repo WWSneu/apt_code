@@ -1,0 +1,28 @@
+{
+  "image_name": "bda105088cd89bf80e14c29c64218822.jpeg",
+  "original_size": {
+    "width": 4096,
+    "height": 4096
+  },
+  "resized_size": {
+    "width": 980,
+    "height": 980
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 70,
+    "num_patches_w": 70,
+    "total": 4900
+  },
+  "per_scale_selected": {
+    "14": 1240,
+    "56": 186,
+    "28": 171,
+    "0": 11536
+  },
+  "retained_per_image": [
+    1597
+  ],
+  "retained_total_excluding_cls": 1597,
+  "retained_ratio_percent": 32.5918
+}

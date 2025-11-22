@@ -47,6 +47,8 @@ class Qwen2_VL(lmms):
         system_prompt: Optional[str] = "You are a helpful assistant.",
         interleave_visuals: Optional[bool] = False,
         reasoning_prompt: Optional[str] = None,
+        patch_selection_method: Optional[str] = None,
+        alpha: Optional[float] = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -73,6 +75,23 @@ class Qwen2_VL(lmms):
         else:
             self._model = Qwen2VLForConditionalGeneration.from_pretrained(pretrained, torch_dtype="auto", device_map=self.device_map).eval()
         self.processor = AutoProcessor.from_pretrained(pretrained, max_pixels=max_pixels, min_pixels=min_pixels, use_fast=False)
+        # If patch selection parameters were provided via model_args, forward them to the image processor instance
+        try:
+            if patch_selection_method is not None:
+                setattr(self.processor, "patch_selection_method", patch_selection_method)
+            if alpha is not None:
+                setattr(self.processor, "alpha", alpha)
+        except Exception:
+            # Best-effort: if processor does not expose these attributes, ignore silently
+            pass
+        # Log the forwarded patch selection parameters for verification
+        try:
+            eval_logger.info(
+                f"Forwarded patch_selection_method={getattr(self.processor, 'patch_selection_method', None)}, alpha={getattr(self.processor, 'alpha', None)}"
+            )
+        except Exception:
+            # If logging fails for any reason, ignore to avoid breaking initialization
+            pass
         self.max_pixels = max_pixels
         self.min_pixels = min_pixels
         self.max_num_frames = max_num_frames

@@ -43,6 +43,8 @@ class Qwen2VLImagesKwargs(ImagesKwargs):
     patch_size: Optional[int]
     temporal_patch_size: Optional[int]
     merge_size: Optional[int]
+    patch_selection_method: Optional[str]
+    alpha: Optional[float]
 
 
 class Qwen2VLProcessorKwargs(ProcessingKwargs, total=False):

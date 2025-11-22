@@ -1,0 +1,11 @@
+Image Statistics
+================
+Image: Frieren.jpg
+Original size (W,H): 1920,1080
+Resized size (W,H): 1316,728
+Patch size: 14
+Grid patches: 52 x 94 = 4888
+Retained patches per image (excluding class token): [325]
+Retained total (excluding cls): 325
+Retained ratio: 6.6489%
+Per-scale selected: {14: 0, 56: 299, 28: 26, 0: 14560}

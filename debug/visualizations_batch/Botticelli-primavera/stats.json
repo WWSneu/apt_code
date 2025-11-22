@@ -1,0 +1,28 @@
+{
+  "image_name": "Botticelli-primavera.jpg",
+  "original_size": {
+    "width": 2560,
+    "height": 1682
+  },
+  "resized_size": {
+    "width": 1232,
+    "height": 812
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 58,
+    "num_patches_w": 88,
+    "total": 5104
+  },
+  "per_scale_selected": {
+    "14": 5104,
+    "56": 0,
+    "28": 0,
+    "0": 5104
+  },
+  "retained_per_image": [
+    5104
+  ],
+  "retained_total_excluding_cls": 5104,
+  "retained_ratio_percent": 100.0
+}

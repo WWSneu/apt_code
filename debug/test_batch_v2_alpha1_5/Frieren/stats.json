@@ -1,0 +1,28 @@
+{
+  "image_name": "Frieren.jpg",
+  "original_size": {
+    "width": 1920,
+    "height": 1080
+  },
+  "resized_size": {
+    "width": 1316,
+    "height": 728
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 52,
+    "num_patches_w": 94,
+    "total": 4888
+  },
+  "per_scale_selected": {
+    "14": 0,
+    "56": 299,
+    "28": 26,
+    "0": 14560
+  },
+  "retained_per_image": [
+    325
+  ],
+  "retained_total_excluding_cls": 325,
+  "retained_ratio_percent": 6.6489
+}

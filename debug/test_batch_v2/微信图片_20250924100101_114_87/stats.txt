@@ -1,0 +1,11 @@
+Image Statistics
+================
+Image: 微信图片_20250924100101_114_87.jpg
+Original size (W,H): 4096,3072
+Resized size (W,H): 1148,840
+Patch size: 14
+Grid patches: 60 x 82 = 4920
+Retained patches per image (excluding class token): [3747]
+Retained total (excluding cls): 3747
+Retained ratio: 76.1585%
+Per-scale selected: {14: 3532, 56: 44, 28: 171, 0: 7012}

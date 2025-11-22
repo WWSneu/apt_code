@@ -1,0 +1,28 @@
+{
+  "image_name": "微信图片_20250924100101_114_87.jpg",
+  "original_size": {
+    "width": 4096,
+    "height": 3072
+  },
+  "resized_size": {
+    "width": 1148,
+    "height": 840
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 60,
+    "num_patches_w": 82,
+    "total": 4920
+  },
+  "per_scale_selected": {
+    "14": 4812,
+    "56": 4,
+    "28": 11,
+    "0": 5092
+  },
+  "retained_per_image": [
+    4827
+  ],
+  "retained_total_excluding_cls": 4827,
+  "retained_ratio_percent": 98.1098
+}

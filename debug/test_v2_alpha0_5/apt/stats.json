@@ -1,0 +1,28 @@
+{
+  "image_name": "apt.jpg",
+  "original_size": {
+    "width": 1536,
+    "height": 672
+  },
+  "resized_size": {
+    "width": 1512,
+    "height": 644
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 46,
+    "num_patches_w": 108,
+    "total": 4968
+  },
+  "per_scale_selected": {
+    "14": 4304,
+    "56": 18,
+    "28": 94,
+    "0": 5920
+  },
+  "retained_per_image": [
+    4416
+  ],
+  "retained_total_excluding_cls": 4416,
+  "retained_ratio_percent": 88.8889
+}

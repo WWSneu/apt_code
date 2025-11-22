@@ -1,0 +1,28 @@
+{
+  "image_name": "test.jpeg",
+  "original_size": {
+    "width": 826,
+    "height": 970
+  },
+  "resized_size": {
+    "width": 840,
+    "height": 980
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 70,
+    "num_patches_w": 60,
+    "total": 4200
+  },
+  "per_scale_selected": {
+    "14": 2876,
+    "56": 14,
+    "28": 275,
+    "0": 5748
+  },
+  "retained_per_image": [
+    3165
+  ],
+  "retained_total_excluding_cls": 3165,
+  "retained_ratio_percent": 75.3571
+}

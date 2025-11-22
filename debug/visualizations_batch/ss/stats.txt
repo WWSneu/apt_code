@@ -1,0 +1,11 @@
+Image Statistics
+================
+Image: ss.jpg
+Original size (W,H): 3120,2080
+Resized size (W,H): 1204,812
+Patch size: 14
+Grid patches: 58 x 86 = 4988
+Retained patches per image (excluding class token): [1211]
+Retained total (excluding cls): 1211
+Retained ratio: 24.2783%
+Per-scale selected: {14: 912, 56: 240, 28: 59, 0: 12904}

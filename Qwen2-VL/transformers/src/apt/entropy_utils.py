@@ -253,6 +253,236 @@ def select_patches_by_threshold(entropy_maps, thresholds, alpha=1.):
     # eval_logger.info("Final combined mask: {}", masks[0])
     return masks
 
+def select_patches_by_threshold_v2(entropy_maps, thresholds=None, alpha=1.):
+    """
+    V2 版本的patch选择方法：使用最大尺寸patch熵的平均值作为所有层级的threshold基准
+    
+    Vectorized version of patch selection based on entropy thresholds (V2 variant).
+    Uses dynamic threshold computation based on maximum patch size entropy.
+    
+    Args:
+        entropy_maps (dict): Contains patch sizes as keys mapping to
+            torch.Tensor entropy maps of shape (B, H_p, W_p) where
+            H_p and W_p depend on the patch size
+        thresholds (list or None): Not used in v2. If provided for compatibility, it will be ignored.
+        alpha (float): Hyperparameter controlling threshold = alpha * mean(max_patch_entropy)
+                      Higher alpha → more patches selected (higher recall)
+                      Lower alpha → fewer patches selected (lower recall)
+    Returns:
+        masks (dict): Dictionary mapping patch sizes to their 0/1 masks
+    """
+    patch_sizes = sorted(list(entropy_maps.keys()))
+    
+    # Special case: if num_scales == 1, just return ones-mask for the first scale
+    if len(patch_sizes) == 1:
+        masks = {}
+        masks[patch_sizes[0]] = torch.ones_like(entropy_maps[patch_sizes[0]])
+        return masks
+    
+    # Compute dynamic threshold based on maximum patch size entropy
+    max_patch_size = patch_sizes[-1]
+    max_entropy_map = entropy_maps[max_patch_size]
+    
+    # Filter out padding values (values close to 1e6) to get true entropy statistics
+    valid_entropies = max_entropy_map[max_entropy_map < 1e6]
+    
+    if valid_entropies.numel() == 0:
+        # Fallback if all values are padding
+        base_threshold = max_entropy_map.mean()
+    else:
+        # Use mean of valid entropies as the base threshold
+        base_threshold = valid_entropies.mean()
+    
+    # Apply alpha hyperparameter to scale the threshold uniformly across all layers
+    threshold = alpha * base_threshold
+    
+    masks = {}
+    # Initialize mask for smallest patch size
+    masks[patch_sizes[0]] = torch.ones_like(entropy_maps[patch_sizes[0]])
+    
+    # Process each scale from largest to smallest using the same threshold
+    for i in range(len(patch_sizes)-1, 0, -1):
+        current_size = patch_sizes[i]
+        
+        # Create mask for current patch size using dynamic threshold
+        masks[current_size] = (entropy_maps[current_size] < threshold).float()
+
+    # Calculate layer relationships (ensure no overlap)
+    for i in range(len(patch_sizes)-1, 0, -1):
+        current_size = patch_sizes[i]
+
+        for j in range(i):
+            # Upscale mask to match smaller patch size
+            smaller_size = patch_sizes[j]
+            scale_factor = current_size // smaller_size 
+            mask_upscaled = masks[current_size].repeat_interleave(scale_factor, dim=1).repeat_interleave(scale_factor, dim=2)
+            
+            # Ensure upscaled mask matches the dimensions of smaller patches
+            H_small, W_small = entropy_maps[smaller_size].shape[1:]
+            mask_upscaled = mask_upscaled[:, :H_small, :W_small]
+            
+            # Update mask for smaller patches
+            masks[smaller_size] = masks[smaller_size] * (1 - mask_upscaled)
+    
+    masks[0] = torch.ones_like(entropy_maps[patch_sizes[0]])
+    for i in range(len(patch_sizes)-1, 0, -1):
+        current_size = patch_sizes[i]
+        smaller_size = patch_sizes[0]
+        scale_factor = current_size // smaller_size 
+        mask_upscaled = masks[current_size].repeat_interleave(scale_factor, dim=1).repeat_interleave(scale_factor, dim=2)
+        
+        # Ensure upscaled mask matches the dimensions of smaller patches
+        H_small, W_small = entropy_maps[smaller_size].shape[1:]
+        mask_upscaled = mask_upscaled[:, :H_small, :W_small]
+        masks[0] = masks[0] + i * mask_upscaled
+    
+    return masks
+
+
+def select_patches_by_budget(entropy_maps, budget: int):
+    """
+    Select patches based on a global budget (number of tokens) using a 3-level scheme.
+
+    Assumptions & mapping:
+    - The smallest patch-size map in `entropy_maps` is treated as L1 (highest resolution).
+    - L2 is obtained by 2x2 average-pooling of L1; L3 by 4x4 average-pooling of L1.
+    - Base token count (all L3 kept) = H3 * W3. Each split (1 -> 4) increases tokens by 3.
+
+    Args:
+        entropy_maps (dict): mapping from patch_size -> torch.Tensor with shape
+                             either (H, W) or (B, H, W). Must contain at least
+                             the smallest (L1) resolution; this function will
+                             derive L2/L3 from L1.
+        budget (int): desired total token budget (per image). If batch provided,
+                      treated as same budget for all images.
+
+    Returns:
+        masks (dict): mapping patch_size -> float mask (0/1) with same spatial
+                      dims as corresponding entropy_maps entries. The masks
+                      indicate which patches are KEPT at each scale.
+    """
+    patch_sizes = sorted(list(entropy_maps.keys()))
+    if len(patch_sizes) < 1:
+        raise ValueError('entropy_maps must contain at least one patch size')
+
+    ps_l1 = patch_sizes[0]
+    ent_l1 = entropy_maps[ps_l1]
+
+    # Ensure batch dimension: convert (H,W) -> (1,H,W)
+    is_batched = True
+    if ent_l1.dim() == 2:
+        ent_l1 = ent_l1.unsqueeze(0)
+        is_batched = False
+    elif ent_l1.dim() == 3:
+        is_batched = True
+    else:
+        raise ValueError('entropy map must have shape (H,W) or (B,H,W)')
+
+    device = ent_l1.device
+    B, H1, W1 = ent_l1.shape
+
+    # Compute L2 (2x2 avg pool) and L3 (4x4 avg pool)
+    ent_l1_t = ent_l1.unsqueeze(1)  # (B,1,H1,W1)
+    ent_l2 = F.avg_pool2d(ent_l1_t, kernel_size=2, stride=2, ceil_mode=False).squeeze(1)
+    ent_l3 = F.avg_pool2d(ent_l1_t, kernel_size=4, stride=4, ceil_mode=False).squeeze(1)
+
+    H2, W2 = ent_l2.shape[1], ent_l2.shape[2]
+    H3, W3 = ent_l3.shape[1], ent_l3.shape[2]
+
+    base_tokens = H3 * W3
+    k = (budget - base_tokens) // 3
+    if k <= 0:
+        # No splits allowed: all kept as L3
+        masks = {}
+        for ps in patch_sizes:
+            if ps == ps_l1:
+                m = torch.zeros_like(ent_l1)
+            else:
+                # If the requested patch size exists in entropy_maps, match its shape
+                if ps in entropy_maps:
+                    m = torch.zeros_like(entropy_maps[ps])
+                else:
+                    m = torch.zeros((B, H3, W3), device=device)
+            if not is_batched:
+                m = m.squeeze(0)
+            masks[ps] = m.float()
+        largest_ps = patch_sizes[-1]
+        m3 = torch.ones((1, H3, W3), device=device) if not is_batched else torch.ones((B, H3, W3), device=device)
+        if not is_batched:
+            m3 = m3.squeeze(0)
+        masks[largest_ps] = m3.float()
+        return masks
+
+    # Scores
+    score_l2 = ent_l2
+    pooled_s_l2 = F.max_pool2d(score_l2.unsqueeze(1), kernel_size=2, stride=2).squeeze(1)
+    score_l3 = torch.maximum(ent_l3, pooled_s_l2)
+
+    keep_l1_list, keep_l2_list, keep_l3_list = [], [], []
+
+    for b in range(B):
+        sc3 = score_l3[b]
+        sc2 = score_l2[b]
+
+        cand3 = sc3.reshape(-1)
+        cand2 = sc2.reshape(-1)
+        candidates = torch.cat([cand3, cand2], dim=0)
+
+        num_candidates = candidates.numel()
+        kk = int(min(k, num_candidates))
+
+        if kk <= 0:
+            split3 = torch.zeros_like(sc3, dtype=torch.bool)
+            split2 = torch.zeros_like(sc2, dtype=torch.bool)
+        else:
+            if kk >= num_candidates:
+                T = candidates.min() - 1e-6
+            else:
+                topk = torch.topk(candidates, kk)
+                T = topk.values.min()
+
+            split3 = sc3 >= T
+            split2 = sc2 >= T
+
+        keep3 = (~split3).float()
+
+        split3_up_l2 = F.interpolate(split3.unsqueeze(0).unsqueeze(0).float(), size=(H2, W2), mode='nearest').squeeze()
+        keep2 = (split3_up_l2.bool() & (~split2)).float()
+
+        split2_up_l1 = F.interpolate(split2.unsqueeze(0).unsqueeze(0).float(), size=(H1, W1), mode='nearest').squeeze()
+        keep1 = split2_up_l1.float()
+
+        keep_l1_list.append(keep1.unsqueeze(0))
+        keep_l2_list.append(keep2.unsqueeze(0))
+        keep_l3_list.append(keep3.unsqueeze(0))
+
+    keep_l1 = torch.cat(keep_l1_list, dim=0)
+    keep_l2 = torch.cat(keep_l2_list, dim=0)
+    keep_l3 = torch.cat(keep_l3_list, dim=0)
+
+    # Map to provided patch sizes (expecting at least three levels)
+    masks = {}
+    if len(patch_sizes) >= 3:
+        ps_l2 = patch_sizes[1]
+        ps_l3 = patch_sizes[2]
+    elif len(patch_sizes) == 2:
+        ps_l2 = patch_sizes[1]
+        ps_l3 = patch_sizes[1] * 2
+    else:
+        masks = {ps_l1: (keep_l1.squeeze(0) if not is_batched else keep_l1)}
+        return masks
+
+    if not is_batched:
+        masks[ps_l1] = keep_l1.squeeze(0).float()
+        masks[ps_l2] = keep_l2.squeeze(0).float()
+        masks[ps_l3] = keep_l3.squeeze(0).float()
+    else:
+        masks[ps_l1] = keep_l1.float()
+        masks[ps_l2] = keep_l2.float()
+        masks[ps_l3] = keep_l3.float()
+
+    return masks
+
 def visualize_selected_patches_cv2(
     image_tensor, 
     masks, 

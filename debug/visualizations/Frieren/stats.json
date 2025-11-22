@@ -1,0 +1,33 @@
+{
+  "image_name": "Frieren.jpg",
+  "original_size": {
+    "width": 1920,
+    "height": 1080
+  },
+  "resized_size": {
+    "width": 1316,
+    "height": 728
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 52,
+    "num_patches_w": 94,
+    "total": 4888
+  },
+  "per_scale_selected": {
+    "14": 984,
+    "28": 376,
+    "56": 155
+  },
+  "retained_per_image": [
+    1515
+  ],
+  "retained_total_excluding_cls": 1515,
+  "retained_ratio_percent": 30.9943,
+  "budget_info": {
+    "base_tokens": 312,
+    "base_small_tokens": 4888,
+    "k": 384,
+    "budget": 1466
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "image_name": "ss.jpg",
+  "original_size": {
+    "width": 3120,
+    "height": 2080
+  },
+  "resized_size": {
+    "width": 1204,
+    "height": 812
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 58,
+    "num_patches_w": 86,
+    "total": 4988
+  },
+  "per_scale_selected": {
+    "14": 1048,
+    "56": 209,
+    "28": 149,
+    "0": 12272
+  },
+  "retained_per_image": [
+    1406
+  ],
+  "retained_total_excluding_cls": 1406,
+  "retained_ratio_percent": 28.1877
+}

@@ -17,7 +17,9 @@ from loguru import logger as eval_logger
 
 from apt.entropy_utils import (
     select_patches_by_threshold,
+    select_patches_by_threshold_v2,
     visualize_selected_patches_cv2,
+    select_patches_by_budget,
     compute_patch_entropy_vectorized,
     compute_patch_entropy_batched,
     compute_patch_laplacian_vectorized,
@@ -38,6 +40,7 @@ class PatchTokenizer(nn.Module):
         std (List[float]): Standard deviation values for normalization
         method (str): Method to use for computing patch importance maps ('entropy' or 'laplacian')
         laplacian_aggregate (str): Method to aggregate Laplacian values ('mean', 'max', or 'std')
+        patch_selection_method (str): Patch selection method ('v1' or 'v2', default: 'v1')
     """
     def __init__(
         self,
@@ -49,6 +52,8 @@ class PatchTokenizer(nn.Module):
         std: List[float],
         method: str = 'entropy',
         laplacian_aggregate: str = 'mean',
+        patch_selection_method: str = 'v1',
+        alpha: float = 1.0,
     ):
         super().__init__()
         self.num_scales = num_scales
@@ -57,6 +62,13 @@ class PatchTokenizer(nn.Module):
         self.thresholds = thresholds
         self.method = method
         self.laplacian_aggregate = laplacian_aggregate
+        self.patch_selection_method = patch_selection_method
+        self.alpha = alpha
+        # Filled when using budget mode: {'base_tokens': int, 'k': int, 'budget': int}
+        self.last_budget_info = None
+
+        if patch_selection_method not in ['v1', 'v2', 'budget']:
+            raise ValueError(f"patch_selection_method must be 'v1', 'v2' or 'budget', got '{patch_selection_method}'")
 
         self.pos_embed16: Union[torch.Tensor, None] = None
         self.pos_embed32: Union[torch.Tensor, None] = None
@@ -86,7 +98,50 @@ class PatchTokenizer(nn.Module):
                   (-1 for class token)
                 - seqlens (List[int]): Sequence lengths for each batch item
         """
-        masks = select_patches_by_threshold(importance_maps, thresholds=self.thresholds)
+        # Use selected patch selection method
+        if self.patch_selection_method == 'v1':
+            masks = select_patches_by_threshold(importance_maps, thresholds=self.thresholds)
+        elif self.patch_selection_method == 'v2':
+            # v2 uses dynamic thresholds based on alpha hyperparameter
+            # Ignore self.thresholds and use alpha instead
+            masks = select_patches_by_threshold_v2(importance_maps, thresholds=None, alpha=self.alpha)
+        elif self.patch_selection_method == 'budget':
+            # budget mode: interpret alpha as fraction of the total smallest-patch tokens
+            # i.e., alpha = retained_small_fraction (0..1), so desired budget = alpha * (H1*W1)
+            # base_tokens remains number of tokens if all kept at largest scale (L3)
+            ps_sorted = sorted(list(importance_maps.keys()))
+            smallest_ps = ps_sorted[0]
+            largest_ps = ps_sorted[-1]
+
+            # shapes
+            smallest_map = importance_maps[smallest_ps]
+            largest_map = importance_maps[largest_ps]
+            H1, W1 = smallest_map.shape[1], smallest_map.shape[2]
+            H3, W3 = largest_map.shape[1], largest_map.shape[2]
+
+            base_small_tokens = H1 * W1
+            base_tokens = H3 * W3
+
+            # Desired budget = fraction * base_small_tokens
+            budget = int(max(0, round(self.alpha * float(base_small_tokens))))
+
+            # k: maximum splits allowed (each split increases tokens by 3, starting from all-L3)
+            k = (budget - base_tokens) // 3
+            if k < 0:
+                k = 0
+
+            # record for later inspection by caller (visualize script)
+            self.last_budget_info = {
+                'base_tokens': int(base_tokens),
+                'base_small_tokens': int(base_small_tokens),
+                'k': int(k),
+                'budget': int(budget)
+            }
+
+            masks = select_patches_by_budget(importance_maps, budget=budget)
+        else:
+            raise ValueError(f"Unknown patch_selection_method: {self.patch_selection_method}")
+        
         batch_size = masks[self.base_patch_size].shape[0]
         # eval_logger.info(f"batch_size: {batch_size}")
         all_masks = []

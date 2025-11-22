@@ -1,0 +1,11 @@
+Image Statistics
+================
+Image: test.jpeg
+Original size (W,H): 826,970
+Resized size (W,H): 840,980
+Patch size: 14
+Grid patches: 70 x 60 = 4200
+Retained patches per image (excluding class token): [513]
+Retained total (excluding cls): 513
+Retained ratio: 12.2143%
+Per-scale selected: {14: 136, 56: 213, 28: 164, 0: 11672}

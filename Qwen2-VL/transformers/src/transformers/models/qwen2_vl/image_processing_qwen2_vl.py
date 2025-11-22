@@ -136,6 +136,10 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             The temporal patch size of the vision encoder.
         merge_size (`int`, *optional*, defaults to 2):
             The merge size of the vision encoder to llm encoder.
+        patch_selection_method (`str`, *optional*, defaults to 'v1'):
+            Patch selection method ('v1', 'v2', or 'budget').
+        alpha (`float`, *optional*, defaults to 1.0):
+            Hyperparameter for patch selection (v2: threshold scaling; budget: retention fraction).
     """
 
     model_input_names = ["pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw"]
@@ -156,6 +160,8 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         patch_size: int = 14,
         temporal_patch_size: int = 2,
         merge_size: int = 2,
+        patch_selection_method: str = 'v1',
+        alpha: float = 1.0,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -184,6 +190,8 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         self.temporal_patch_size = temporal_patch_size
         self.merge_size = merge_size
         self.do_convert_rgb = do_convert_rgb
+        self.patch_selection_method = patch_selection_method
+        self.alpha = alpha
 
     def _preprocess(
         self,
@@ -200,6 +208,8 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         temporal_patch_size: Optional[int] = None,
         merge_size: Optional[int] = None,
         do_convert_rgb: Optional[bool] = None,
+        patch_selection_method: Optional[str] = None,
+        alpha: Optional[float] = None,
         data_format: Optional[ChannelDimension] = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
     ):
@@ -295,6 +305,11 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         # eval_logger.info(f"processed_images shape: {np.array(processed_images).shape}")
         patches = processed_images
         # patches.to(device)
+        
+        # Set defaults for patch selection parameters
+        patch_selection_method = patch_selection_method if patch_selection_method is not None else self.patch_selection_method
+        alpha = alpha if alpha is not None else self.alpha
+        
         pt= PatchTokenizer(
             num_scales=3,
             base_patch_size=14,
@@ -302,6 +317,8 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             thresholds=[3, 2],
             mean = [0.48145466, 0.4578275, 0.40821073],
             std = [0.26862954, 0.26130258, 0.27577711],
+            patch_selection_method=patch_selection_method,
+            alpha=alpha,
         )
         patches = np.array(patches)  # 转换为 NumPy 数组
         patches = torch.from_numpy(patches).to(device)        # torch.set_printoptions(threshold=10000, linewidth=200)  # threshold 设置显示元素数量，linewidth 设置行宽
@@ -457,6 +474,8 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         temporal_patch_size: Optional[int] = None,
         merge_size: Optional[int] = None,
         do_convert_rgb: Optional[bool] = None,
+        patch_selection_method: Optional[str] = None,
+        alpha: Optional[float] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: Optional[ChannelDimension] = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
@@ -500,6 +519,10 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
                 The merge size of the vision encoder to llm encoder.
             do_convert_rgb (`bool`, *optional*, defaults to `self.do_convert_rgb`):
                 Whether to convert the image to RGB.
+            patch_selection_method (`str`, *optional*, defaults to `self.patch_selection_method`):
+                Patch selection method ('v1', 'v2', or 'budget').
+            alpha (`float`, *optional*, defaults to `self.alpha`):
+                Hyperparameter for patch selection (v2: threshold scaling; budget: retention fraction).
             return_tensors (`str` or `TensorType`, *optional*):
                 The type of tensors to return. Can be one of:
                 - Unset: Return a list of `np.ndarray`.
@@ -545,6 +568,8 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         temporal_patch_size = temporal_patch_size if temporal_patch_size is not None else self.temporal_patch_size
         merge_size = merge_size if merge_size is not None else self.merge_size
         do_convert_rgb = do_convert_rgb if do_convert_rgb is not None else self.do_convert_rgb
+        patch_selection_method = patch_selection_method if patch_selection_method is not None else self.patch_selection_method
+        alpha = alpha if alpha is not None else self.alpha
 
         if images is not None:
             images = self.fetch_images(images)
@@ -592,8 +617,10 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
                     patch_size=patch_size,
                     temporal_patch_size=temporal_patch_size,
                     merge_size=merge_size,
-                    data_format=data_format,
                     do_convert_rgb=do_convert_rgb,
+                    patch_selection_method=patch_selection_method,
+                    alpha=alpha,
+                    data_format=data_format,
                     input_data_format=input_data_format,
                 )
                 # eval_logger.info(f"Processed image 1: {image}, shape: {image.shape}")

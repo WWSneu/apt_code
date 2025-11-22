@@ -1,0 +1,28 @@
+{
+  "image_name": "LayerViT-full.drawio.png",
+  "original_size": {
+    "width": 16384,
+    "height": 10470
+  },
+  "resized_size": {
+    "width": 1232,
+    "height": 784
+  },
+  "patch_size": 14,
+  "grid_patches": {
+    "num_patches_h": 56,
+    "num_patches_w": 88,
+    "total": 4928
+  },
+  "per_scale_selected": {
+    "14": 560,
+    "56": 265,
+    "28": 32,
+    "0": 13536
+  },
+  "retained_per_image": [
+    857
+  ],
+  "retained_total_excluding_cls": 857,
+  "retained_ratio_percent": 17.3904
+}

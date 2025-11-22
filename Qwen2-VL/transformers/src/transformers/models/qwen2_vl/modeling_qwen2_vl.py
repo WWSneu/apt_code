@@ -916,7 +916,15 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         
         hidden_states = self.patch_embed(patch_merged)
         # eval_logger.info("after patch_embed hidden_states shape: {}", hidden_states.shape)
-        hidden_states = hidden_states[:hidden_states.shape[0] - (hidden_states.shape[0] % 4)]
+
+        # hidden_states = hidden_states[:hidden_states.shape[0] - (hidden_states.shape[0] % 4)]
+
+        pad_len = 4 - (hidden_states.shape[0] % 4)
+        if pad_len > 0 and pad_len < 4:  # 只有当不是4的倍数时才填充
+            # 复制最后 pad_len 个元素
+            padding = hidden_states[-pad_len:]
+            # 拼接填充到末尾
+            hidden_states = torch.cat([hidden_states, padding], dim=0)
         # eval_logger.info("hidden_states:{}", hidden_states)
 
        
@@ -1051,7 +1059,17 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
 
         # eval_logger.info("position_embeddings_merged : {}", (len(position_embeddings_merged[0]), len(position_embeddings_merged[1])))
         position_embeddings_merged = (torch.stack(position_embeddings_merged[0], dim=0), torch.stack(position_embeddings_merged[1], dim=0))
-        position_embeddings_merged = (position_embeddings_merged[0][:position_embeddings_merged[0].shape[0] - (position_embeddings_merged[0].shape[0] % 4)], position_embeddings_merged[1][:position_embeddings_merged[1].shape[0] - (position_embeddings_merged[1].shape[0] % 4)])
+        # position_embeddings_merged = (position_embeddings_merged[0][:position_embeddings_merged[0].shape[0] - (position_embeddings_merged[0].shape[0] % 4)], position_embeddings_merged[1][:position_embeddings_merged[1].shape[0] - (position_embeddings_merged[1].shape[0] % 4)])
+        pad_len = 4 - (position_embeddings_merged[0].shape[0] % 4)
+        if pad_len > 0 and pad_len < 4:
+            padding = position_embeddings_merged[0][-pad_len:]
+            position_embeddings_merged = (torch.cat([position_embeddings_merged[0], padding], dim=0), position_embeddings_merged[1])
+
+        # 对于第二个张量 (sin_emb)
+        pad_len = 4 - (position_embeddings_merged[1].shape[0] % 4)
+        if pad_len > 0 and pad_len < 4:
+            padding = position_embeddings_merged[1][-pad_len:]
+            position_embeddings_merged = (position_embeddings_merged[0], torch.cat([position_embeddings_merged[1], padding], dim=0))
         # position_embeddings_merged = torch.stack(position_embeddings_merged, dim=0)
         # cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
         # position_embeddings = torch.cat(position_embeddings, dim=0)

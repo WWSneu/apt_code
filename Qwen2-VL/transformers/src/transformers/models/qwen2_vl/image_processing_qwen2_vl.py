@@ -420,7 +420,9 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         # eval_logger.info(f"flatten_masks0 shape: {masks[0].shape}")
         # eval_logger.info(f"flatten_patches: {flatten_patches}")
         # eval_logger.info(f"flatten_masks0: {masks[0]}")
-        sum = sum - (sum%4)
+        # sum = sum - (sum%4)
+        if sum % 4 != 0:
+            sum = sum + (4 - sum % 4)
         total = sum
         eval_logger.info("sum in imageprocessor: {}", sum)
         # flatten_patches = flatten_patches[:sum, :]
@@ -433,7 +435,7 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
         best_pair = min(even_factors, key=lambda x: abs(x[0] - x[1]))
         height, width = best_pair
-    
+
         # 返回 [1, h, w]
         grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=device).unsqueeze(0)
 

@@ -330,6 +330,17 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         
         masks, _, seqlens = pt.construct_masks(batch_maps)
 
+        if patch_selection_method == 'budget':
+             # Pad patches tensor to match mask dimensions
+             # masks[0] is the label map with shape (B, H_p, W_p) corresponding to base_patch_size
+             mask_h, mask_w = masks[0].shape[-2:]
+             current_h, current_w = patches.shape[-2] // patch_size, patches.shape[-1] // patch_size
+             
+             if mask_h > current_h or mask_w > current_w:
+                 pad_h_pixels = (mask_h - current_h) * patch_size
+                 pad_w_pixels = (mask_w - current_w) * patch_size
+                 patches = torch.nn.functional.pad(patches, (0, pad_w_pixels, 0, pad_h_pixels), mode='constant', value=0)
+
         output_dict = pt.construct_patch_groups(patches, masks)
         # output.append(output_dict)
 
@@ -372,6 +383,27 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         # eval_logger.info(f"patchs shape patches = np.array(processed_images): {patches.shape}")
         if data_format == ChannelDimension.LAST:
             patches = patches.transpose(0, 3, 1, 2)
+        
+        # Check if padding is needed based on masks[0] (for budget mode)
+        if patch_selection_method == 'budget':
+            mask_h, mask_w = masks[0].shape[-2:]
+            current_h, current_w = patches.shape[-2] // patch_size, patches.shape[-1] // patch_size
+            
+            if mask_h > current_h or mask_w > current_w:
+                pad_h_pixels = (mask_h - current_h) * patch_size
+                pad_w_pixels = (mask_w - current_w) * patch_size
+                
+                # Pad patches (numpy array)
+                # patches: (B, C, H, W)
+                # Pad H and W with zeros
+                # np.pad expects ((before_1, after_1), (before_2, after_2), ...)
+                # Axis 0: Batch, Axis 1: Channel, Axis 2: Height, Axis 3: Width
+                patches = np.pad(patches, ((0,0), (0,0), (0, pad_h_pixels), (0, pad_w_pixels)), mode='constant', constant_values=0)
+                
+                # Update resized_height/width for subsequent calculations
+                resized_height = patches.shape[-2]
+                resized_width = patches.shape[-1]
+
         if patches.shape[0] % temporal_patch_size != 0:
             repeats = np.repeat(
                 patches[-1][np.newaxis], temporal_patch_size - (patches.shape[0] % temporal_patch_size), axis=0
@@ -437,7 +469,9 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         # eval_logger.info(f"flatten_masks0 shape: {masks[0].shape}")
         # eval_logger.info(f"flatten_patches: {flatten_patches}")
         # eval_logger.info(f"flatten_masks0: {masks[0]}")
-        sum = sum - (sum%4)
+        if sum%4 !=0:
+            sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        # sum = sum - (sum%4)
         total = sum
         eval_logger.info("sum in imageprocessor: {}", sum)
         # flatten_patches = flatten_patches[:sum, :]
@@ -453,6 +487,20 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
     
         # 返回 [1, h, w]
         grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=device).unsqueeze(0)
+
+        # Log stats
+        try:
+            orig_h, orig_w = get_image_size(images[0], channel_dim=input_data_format)
+            orig_patches_14 = (orig_h // 14) * (orig_w // 14)
+            resized_patches_14 = (resized_height // 14) * (resized_width // 14)
+            eval_logger.info(
+                f"Image Stats: "
+                f"Original: {orig_h}x{orig_w} ({orig_patches_14} patches), "
+                f"Resized: {resized_height}x{resized_width} ({resized_patches_14} patches), "
+                f"Final APT: {total} patches"
+            )
+        except Exception as e:
+            eval_logger.warning(f"Failed to log image stats: {e}")
 
         return flatten_patches, (grid_t, grid_h, grid_w), processed_images, masks, grid_new_thw
 

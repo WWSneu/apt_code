@@ -188,7 +188,9 @@ class Qwen2VLProcessor(ProcessorMixin):
                             elif output_dict[0][0][j, k].item() == 3:
                                 cnt[3] += 1
                     sum = cnt[1] + cnt[2]/4 + cnt[3]/16
-                    sum = sum - (sum%4)
+                    # sum = sum - (sum%4)
+                    if sum%4 !=0:
+                        sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
                     num_image_tokens = int(sum // merge_length)
                     # eval_logger.info("num_image_tokens: {}", num_image_tokens)
                     text[i] = text[i].replace(self.image_token, "<|placeholder|>" * num_image_tokens, 1)

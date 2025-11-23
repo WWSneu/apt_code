@@ -382,9 +382,60 @@ def select_patches_by_budget(entropy_maps, budget: int):
     B, H1, W1 = ent_l1.shape
 
     # Compute L2 (2x2 avg pool) and L3 (4x4 avg pool)
+    # FIX: Pad ent_l1 so that it is divisible by 4 (for L3), to match the padding logic
+    # in construct_patch_groups (which pads image to be divisible by patch size).
+    # We use the shapes of the provided entropy_maps as the ground truth for target shapes.
+    
+    # Determine target shapes from input entropy_maps if available
+    target_h2, target_w2 = None, None
+    target_h3, target_w3 = None, None
+    
+    if len(patch_sizes) >= 2:
+        ps_l2_key = patch_sizes[1]
+        if ps_l2_key in entropy_maps:
+            target_h2, target_w2 = entropy_maps[ps_l2_key].shape[-2:]
+            
+    if len(patch_sizes) >= 3:
+        ps_l3_key = patch_sizes[2]
+        if ps_l3_key in entropy_maps:
+            target_h3, target_w3 = entropy_maps[ps_l3_key].shape[-2:]
+            
+    # If targets not found in map, infer minimum required padding (round up)
+    if target_h2 is None:
+        target_h2 = (H1 + 1) // 2
+        target_w2 = (W1 + 1) // 2
+    if target_h3 is None:
+        target_h3 = (H1 + 3) // 4
+        target_w3 = (W1 + 3) // 4
+
+    # Calculate required padding for L1 to cover L3 target
+    # We need H1_pad / 4 >= target_h3  => H1_pad >= target_h3 * 4
+    req_h = max(H1, target_h2 * 2, target_h3 * 4)
+    req_w = max(W1, target_w2 * 2, target_w3 * 4)
+    
+    pad_h = req_h - H1
+    pad_w = req_w - W1
+    
     ent_l1_t = ent_l1.unsqueeze(1)  # (B,1,H1,W1)
-    ent_l2 = F.avg_pool2d(ent_l1_t, kernel_size=2, stride=2, ceil_mode=False).squeeze(1)
-    ent_l3 = F.avg_pool2d(ent_l1_t, kernel_size=4, stride=4, ceil_mode=False).squeeze(1)
+    
+    if pad_h > 0 or pad_w > 0:
+        # Pad with a value that won't affect max pooling selection too much, 
+        # but for avg pooling it will dilute the score. 
+        # Using 0 is safe for entropy (usually positive).
+        ent_l1_padded = F.pad(ent_l1_t, (0, pad_w, 0, pad_h), mode='constant', value=0)
+    else:
+        ent_l1_padded = ent_l1_t
+    
+    H_pad, W_pad = ent_l1_padded.shape[-2:]
+
+    ent_l2 = F.avg_pool2d(ent_l1_padded, kernel_size=2, stride=2, ceil_mode=False).squeeze(1)
+    ent_l3 = F.avg_pool2d(ent_l1_padded, kernel_size=4, stride=4, ceil_mode=False).squeeze(1)
+
+    # Ensure we match target dimensions exactly (crop if padded too much due to block alignment)
+    # if ent_l2.shape[-2] > target_h2 or ent_l2.shape[-1] > target_w2:
+    #     ent_l2 = ent_l2[..., :target_h2, :target_w2]
+    # if ent_l3.shape[-2] > target_h3 or ent_l3.shape[-1] > target_w3:
+    #     ent_l3 = ent_l3[..., :target_h3, :target_w3]
 
     H2, W2 = ent_l2.shape[1], ent_l2.shape[2]
     H3, W3 = ent_l3.shape[1], ent_l3.shape[2]
@@ -415,7 +466,7 @@ def select_patches_by_budget(entropy_maps, budget: int):
 
     # Scores
     score_l2 = ent_l2
-    pooled_s_l2 = F.max_pool2d(score_l2.unsqueeze(1), kernel_size=2, stride=2).squeeze(1)
+    pooled_s_l2 = F.max_pool2d(score_l2.unsqueeze(1), kernel_size=2, stride=2, ceil_mode=True).squeeze(1)
     score_l3 = torch.maximum(ent_l3, pooled_s_l2)
 
     keep_l1_list, keep_l2_list, keep_l3_list = [], [], []
@@ -449,7 +500,7 @@ def select_patches_by_budget(entropy_maps, budget: int):
         split3_up_l2 = F.interpolate(split3.unsqueeze(0).unsqueeze(0).float(), size=(H2, W2), mode='nearest').squeeze()
         keep2 = (split3_up_l2.bool() & (~split2)).float()
 
-        split2_up_l1 = F.interpolate(split2.unsqueeze(0).unsqueeze(0).float(), size=(H1, W1), mode='nearest').squeeze()
+        split2_up_l1 = F.interpolate(split2.unsqueeze(0).unsqueeze(0).float(), size=(H_pad, W_pad), mode='nearest').squeeze()
         keep1 = split2_up_l1.float()
 
         keep_l1_list.append(keep1.unsqueeze(0))
@@ -460,8 +511,23 @@ def select_patches_by_budget(entropy_maps, budget: int):
     keep_l2 = torch.cat(keep_l2_list, dim=0)
     keep_l3 = torch.cat(keep_l3_list, dim=0)
 
+    # Construct masks[0] (Label Map) for ImageProcessor compatibility
+    # Upsample L2 and L3 to padded L1 size, then crop to original L1 size
+    keep_l2_up = F.interpolate(keep_l2.unsqueeze(1), scale_factor=2, mode='nearest').squeeze(1)
+    # keep_l2_up = keep_l2_up[:, :H1, :W1]
+    
+    keep_l3_up = F.interpolate(keep_l3.unsqueeze(1), scale_factor=4, mode='nearest').squeeze(1)
+    # keep_l3_up = keep_l3_up[:, :H1, :W1]
+    
+    mask_0 = keep_l1 * 1.0 + keep_l2_up * 2.0 + keep_l3_up * 3.0
+
     # Map to provided patch sizes (expecting at least three levels)
     masks = {}
+    if not is_batched:
+        masks[0] = mask_0.squeeze(0)
+    else:
+        masks[0] = mask_0
+
     if len(patch_sizes) >= 3:
         ps_l2 = patch_sizes[1]
         ps_l3 = patch_sizes[2]
@@ -469,7 +535,8 @@ def select_patches_by_budget(entropy_maps, budget: int):
         ps_l2 = patch_sizes[1]
         ps_l3 = patch_sizes[1] * 2
     else:
-        masks = {ps_l1: (keep_l1.squeeze(0) if not is_batched else keep_l1)}
+        # For single scale, mask_0 is just keep_l1 * 1.0
+        masks[ps_l1] = (keep_l1.squeeze(0) if not is_batched else keep_l1)
         return masks
 
     if not is_batched:

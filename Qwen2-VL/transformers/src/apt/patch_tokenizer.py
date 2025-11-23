@@ -231,8 +231,8 @@ class PatchTokenizer(nn.Module):
                 constituent_patches = einops.rearrange(
                     padded_image,
                     "b c (h n1 p3) (w n2 p4) -> b h w (n1 n2) c p3 p4",
-                    h=(self.image_size[0] + cur_patch_size - 1) // cur_patch_size,
-                    w=(self.image_size[1] + cur_patch_size - 1) // cur_patch_size,
+                    h=num_patches_h,
+                    w=num_patches_w,
                     n1=cur_patch_size // self.base_patch_size,
                     n2=cur_patch_size // self.base_patch_size,
                     p3=self.base_patch_size,

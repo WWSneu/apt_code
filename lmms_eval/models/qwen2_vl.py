@@ -78,9 +78,9 @@ class Qwen2_VL(lmms):
         # If patch selection parameters were provided via model_args, forward them to the image processor instance
         try:
             if patch_selection_method is not None:
-                setattr(self.processor, "patch_selection_method", patch_selection_method)
+                setattr(self.processor.image_processor, "patch_selection_method", patch_selection_method)
             if alpha is not None:
-                setattr(self.processor, "alpha", alpha)
+                setattr(self.processor.image_processor, "alpha", alpha)
         except Exception:
             # Best-effort: if processor does not expose these attributes, ignore silently
             pass
@@ -398,14 +398,13 @@ class Qwen2_VL(lmms):
                     video_inputs[0] = video_tensor[indices]
                 else:
                     eval_logger.warning(f"Unexpected video_inputs format or empty tensor: {type(video_tensor)}")
-
+            '''
             inputs, output_dict, images_output, grid_new_thw = self.processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
             # inputs = {k: torch.from_numpy(v).to(self.device) if isinstance(v, np.ndarray) else v for k, v in inputs.items()}
             # eval_logger.info(f"inputs keys: {list(inputs.keys())}")
-            if self.device_map == "auto":
-                inputs = inputs.to("cuda")  # Assuming 'cuda' is the target for 'auto' on single GPU
-            else:
-                inputs = inputs.to(self.device)
+            # Move tensors to device, but skip non-tensor fields like strings
+            device = "cuda" if self.device_map == "auto" else self.device
+            inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
             # eval_logger.info(f"grid_new_thw: {grid_new_thw}")
             # eval_logger.info(f"output_dict: {output_dict}")
             # eval_logger.info(f"images: {images_output}")
@@ -438,10 +437,47 @@ class Qwen2_VL(lmms):
                 use_cache=self.use_cache,
                 grid_new_thw=grid_new_thw,
             )
+            '''
+            # 1. 修改：恢复解包，processor 返回一个元组
+            inputs, output_dict, images_output, grid_new_thw = self.processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
+            
+            # Move tensors to device, but skip non-tensor fields like strings
+            device = "cuda" if self.device_map == "auto" else self.device
+            # 2. 现在 inputs 是字典，可以正常调用 .items()
+            inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+
+            # Set default generation kwargs first, then override with user-provided ones
+            default_gen_kwargs = {
+                "max_new_tokens": 128,
+                "temperature": 0.0,  # Default to greedy
+                "top_p": None,
+                "num_beams": 1,
+            }
+            current_gen_kwargs = {**default_gen_kwargs, **gen_kwargs}  # Provided gen_kwargs override defaults
+
+            pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+            
+            eval_logger.info("model_generate start here")
+            
+            # 3. 修改：generate 调用时传入额外的参数
+            cont = self.model.generate(
+                **inputs,
+                output_dict=output_dict,
+                images_output=images_output,
+                grid_new_thw=grid_new_thw,
+                eos_token_id=self.tokenizer.eos_token_id,
+                pad_token_id=pad_token_id,
+                do_sample=True if current_gen_kwargs["temperature"] > 0 else False,
+                temperature=current_gen_kwargs["temperature"],
+                top_p=current_gen_kwargs["top_p"],
+                num_beams=current_gen_kwargs["num_beams"],
+                max_new_tokens=current_gen_kwargs["max_new_tokens"],
+                use_cache=self.use_cache,
+            )
             eval_logger.info("model_generate end here")
             # Decode generated sequences, excluding input tokens
             generated_ids_trimmed = []
-            for in_ids, out_ids in zip(inputs.input_ids, cont):
+            for in_ids, out_ids in zip(inputs["input_ids"], cont):
                 # Find the first position where output differs from input, or start after input length
                 input_len = len(in_ids)
                 # Handle potential padding in output; eos might appear before max length

@@ -925,752 +925,6 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         final_output = all_feats[sort_order]
 
         return final_output
-    def vectorized_merge_keep_order_lanczos(self, hidden_states, masks, grid_thw):
-        """与 vectorized_merge_keep_order 相同逻辑，但 Scale-2 特征改用 Lanczos 下采样."""
-        t, h, w = grid_thw[0]
-        if (h % 2) != 0 or (w % 2) != 0:
-            raise ValueError("Lanczos 下采样要求 h 和 w 都能被 2 整除")
-
-        C = hidden_states.shape[-1]
-        device = hidden_states.device
-        N = hidden_states.shape[0]
-
-        if N != t * h * w:
-            raise ValueError("hidden_states 的长度必须等于 t*h*w")
-
-        hidden_states = hidden_states.contiguous()
-
-        original_indices = torch.arange(N, device=device)
-
-        hidden_blk = hidden_states.view(-1, 4, C)
-        indices_blk = original_indices.view(-1, 4)
-        mask_blk_vals = masks[1].view(-1, 4)[:, 0]
-
-        feat_s2 = self._lanczos_downsample(hidden_states, t, h, w, scale=2)
-
-        if (h % 4) != 0 or (w % 4) != 0:
-            raise ValueError("Lanczos Scale-3 下采样要求 h 和 w 都能被 4 整除")
-        feat_s3 = self._lanczos_downsample(hidden_states, t, h, w, scale=4)
-
-        h_blk, w_blk = h // 2, w // 2
-
-        idx_s2 = indices_blk[:, 0]
-        idx_s2_spatial = idx_s2.view(t, h_blk, w_blk)
-        idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
-
-        masks[1] = masks[1].view(-1)
-        mask_1 = (masks[1] == 1)
-        out_1 = hidden_states[mask_1]
-        out_idx_1 = original_indices[mask_1]
-
-        mask_2 = (mask_blk_vals == 2)
-        out_2 = feat_s2[mask_2]
-        out_idx_2 = idx_s2[mask_2]
-
-        mask_grid = mask_blk_vals.view(t, h_blk, w_blk)
-        mask_3 = (mask_grid[:, 0::2, 0::2] == 3).flatten()
-        out_3 = feat_s3[mask_3]
-        out_idx_3 = idx_s3[mask_3]
-
-        all_feats = torch.cat([out_1, out_2, out_3], dim=0)
-        all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
-
-        sort_order = torch.argsort(all_indices)
-        final_output = all_feats[sort_order]
-
-        return final_output
-    
-    def _lanczos_downsample(self, hidden_states, t, h, w, scale):
-        """
-        输入: [N, 1176]
-        N = t * h * w
-        1176 = Channel(3) * Temporal(2) * Patch(14) * Patch(14)
-        """
-        try:
-            from torchvision.transforms import InterpolationMode
-            from torchvision.transforms.functional import resize
-        except ImportError as err:
-            raise ImportError("Lanczos 下采样功能需要 torchvision") from err
-
-        if (h % scale) != 0 or (w % scale) != 0:
-            raise ValueError(f"Lanczos 下采样要求 h、w 能被 {scale} 整除")
-
-        device = hidden_states.device
-        dtype = hidden_states.dtype
-        
-        # 1. 解包 (Unpack)
-        # 按照 transpose 的顺序: C, T, P, P
-        patch_size = 14
-        temporal_size = 2
-        channels = 3
-        
-        # [t, h, w, 3, 2, 14, 14]
-        x = hidden_states.view(t, h, w, channels, temporal_size, patch_size, patch_size)
-
-        # 2. 拼成大图 (Reconstruct Full Image)
-        # 我们需要把 t 和 temporal_size 视为 Batch 维度（因为它们不参与空间缩放）
-        # 目标: [Batch, Channel, Height, Width]
-        # Batch = t * 2
-        # Channel = 3
-        # Height = h * 14
-        # Width = w * 14
-        
-        # permute 顺序: 
-        # 原始: 0(t), 1(h), 2(w), 3(C), 4(T_ps), 5(ph), 6(pw)
-        # 目标: 0(t), 4(T_ps), 3(C), 1(h), 5(ph), 2(w), 6(pw)
-        full_img = x.permute(0, 4, 3, 1, 5, 2, 6).reshape(t * temporal_size, channels, h * patch_size, w * patch_size)
-
-        # 3. Lanczos 下采样
-        target_h_pixels = (h // scale) * patch_size
-        target_w_pixels = (w // scale) * patch_size
-        
-        full_img_float = full_img.float()
-        downsampled_img = resize(
-            full_img_float, 
-            [target_h_pixels, target_w_pixels],
-            interpolation=InterpolationMode.LANCZOS,
-            antialias=True
-        )
-
-        # 4. 还原结构 (Repack)
-        h_new, w_new = h // scale, w // scale
-        
-        # 拆分 Grid
-        # [t*2, 3, h_new*14, w_new*14] -> [t, 2, 3, h_new, 14, w_new, 14]
-        x_new = downsampled_img.view(t, temporal_size, channels, h_new, patch_size, w_new, patch_size)
-        
-        # Permute 回原始的内存布局: [t, h, w, C, T, P, P]
-        # 当前: 0(t), 1(T), 2(C), 3(h), 4(ph), 5(w), 6(pw)
-        # 目标: 0(t), 3(h), 5(w), 2(C), 1(T), 4(ph), 6(pw)
-        x_new = x_new.permute(0, 3, 5, 2, 1, 4, 6).contiguous()
-        
-        # Flatten
-        # [N_new, 1176]
-        feat_s_out = x_new.view(-1, 1176).to(dtype=dtype)
-
-        return feat_s_out
-
-    # def _lanczos_downsample(self, hidden_states, t, h, w, scale):
-    #     """
-    #     将 [t*h*w, C] 的特征还原为大图，进行 Lanczos 下采样，再切回 Patch。
-    #     假设 hidden_states 是 raw pixels，C = 3 * patch_size * patch_size
-    #     """
-    #     eval_logger.info("Lanczos 下采样: 输入尺寸 (t={}, h={}, w={}), scale={} working<<<<<<<<<<<<<<<<<<<", t, h, w, scale)
-    #     try:
-    #         from torchvision.transforms import InterpolationMode
-    #         from torchvision.transforms.functional import resize
-    #     except ImportError as err:
-    #         raise ImportError("Lanczos 下采样功能需要 torchvision") from err
-
-    #     if (h % scale) != 0 or (w % scale) != 0:
-    #         raise ValueError(f"Lanczos 下采样要求 h、w 能被 {scale} 整除")
-
-    #     # 1. 确定 Patch Size
-    #     # Qwen2-VL 的 patch_size 通常是 14。可以通过 C 反推，或者从 config 获取。
-    #     # 这里假设 C = 3 * 14 * 14 = 588
-    #     C = hidden_states.shape[-1]
-    #     import math
-    #     patch_size = int(math.sqrt(C // 3))
-    #     if 3 * patch_size * patch_size != C:
-    #          raise ValueError(f"hidden_states dim {C} 不符合 3*p*p 格式，无法还原图像")
-
-    #     device = hidden_states.device
-    #     dtype = hidden_states.dtype
-
-    #     # 2. 还原完整的图像空间 (Spatial Reconstruction)
-    #     # 输入: [t*h*w, C] -> [t, h, w, 3, p, p]
-    #     x = hidden_states.view(t, h, w, 3, patch_size, patch_size)
-        
-    #     # 拼接成整图: [t, 3, h*p, w*p]
-    #     # permute: (t, 3, h, p, w, p) -> 这里的顺序很关键
-    #     full_img = x.permute(0, 3, 1, 4, 2, 5).reshape(t, 3, h * patch_size, w * patch_size)
-
-    #     # 3. 计算目标尺寸
-    #     # 我们希望 Grid 变为 (h/scale, w/scale)，每个格子依然是 patch_size
-    #     target_h_pixels = (h // scale) * patch_size
-    #     target_w_pixels = (w // scale) * patch_size
-        
-    #     # 4. 执行真正的图像级 Lanczos 下采样
-    #     # 输入必须是 Float
-    #     full_img_float = full_img.float()
-    #     downsampled_img = resize(
-    #         full_img_float, 
-    #         [target_h_pixels, target_w_pixels],
-    #         interpolation=InterpolationMode.LANCZOS,
-    #         antialias=True
-    #     )
-
-    #     # 5. 重新切分成 Patch (Re-patchify)
-    #     # [t, 3, h_new*p, w_new*p] -> [t, h_new, w_new, C]
-    #     h_new, w_new = h // scale, w // scale
-        
-    #     # view: 分割回 grid
-    #     # [t, 3, h_new, p, w_new, p]
-    #     x_new = downsampled_img.view(t, 3, h_new, patch_size, w_new, patch_size)
-        
-    #     # permute: (t, h_new, w_new, 3, p, p)
-    #     x_new = x_new.permute(0, 2, 4, 1, 3, 5).contiguous()
-        
-    #     # flatten: [N_new, C]
-    #     feat_s_out = x_new.view(-1, C).to(dtype=dtype)
-
-    #     return feat_s_out
-    
-    def _save_debug_image(self, tensor_img, folder="Render", max_keep=30):
-        """
-        保存 Tensor 为图片用于 Debug。
-        策略：如果文件夹内图片数量达到 max_keep，则停止保存新图片（不删除旧图片）。
-        """
-        import os
-        import time
-        from torchvision.utils import save_image
-
-        # 1. 创建文件夹
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-
-        # 2. 检查数量限制 (Capacity Cap)
-        # 获取文件夹内所有的 png 文件
-        current_files = [f for f in os.listdir(folder) if f.endswith('.png')]
-        
-        # 如果已满，直接返回，不做任何操作
-        if len(current_files) >= max_keep:
-            return
-
-        # 3. 准备图片数据
-        # 如果是 Batch 模式 [B, C, H, W]，只存第一张
-        img_to_save = tensor_img[0] if tensor_img.dim() == 4 else tensor_img
-        
-        # 克隆并转为 float，移至 CPU
-        img_to_save = img_to_save.detach().float().cpu()
-
-        # 4. 归一化 (Min-Max Normalize)
-        # 这一步对于可视化 feature map 至关重要，否则图片很可能全黑或全白
-        img_min = img_to_save.min()
-        img_max = img_to_save.max()
-        if img_max > img_min:
-            img_to_save = (img_to_save - img_min) / (img_max - img_min)
-
-        # 5. 生成文件名并保存
-        # 使用时间戳 + 纳秒 保证文件名不重复
-        timestamp = time.strftime("%H%M%S")
-        nano = str(time.time_ns())[-6:] 
-        filename = f"debug_{timestamp}_{nano}.png"
-        save_path = os.path.join(folder, filename)
-
-        try:
-            save_image(img_to_save, save_path)
-            # print(f"Debug image saved: {save_path}") 
-        except Exception as e:
-            print(f"Failed to save debug image: {e}")
-    
-    def vectorized_merge_keep_order_bicubic(self, hidden_states, masks, grid_thw):
-        """与 vectorized_merge_keep_order 相同逻辑，但 Scale-2/3 特征改用 Bicubic 下采样."""
-        t, h, w = grid_thw[0]
-        # ... (前置检查逻辑不变) ...
-        if (h % 2) != 0 or (w % 2) != 0:
-            raise ValueError("下采样要求 h 和 w 都能被 2 整除")
-
-        C = hidden_states.shape[-1]
-        device = hidden_states.device
-        N = hidden_states.shape[0]
-        
-        # ... (中间变量准备不变) ...
-        original_indices = torch.arange(N, device=device)
-        hidden_blk = hidden_states.view(-1, 4, C)
-        indices_blk = original_indices.view(-1, 4)
-        mask_blk_vals = masks[1].view(-1, 4)[:, 0]
-
-        # === 修改点：调用 _bicubic_downsample ===
-        feat_s2 = self._bicubic_downsample(hidden_states, t, h, w, scale=2)
-
-        if (h % 4) != 0 or (w % 4) != 0:
-            raise ValueError("Scale-3 下采样要求 h 和 w 都能被 4 整除")
-        feat_s3 = self._bicubic_downsample(hidden_states, t, h, w, scale=4)
-        # ======================================
-
-        # ... (后续索引计算、收集、排序逻辑完全不变) ...
-        h_blk, w_blk = h // 2, w // 2
-        idx_s2 = indices_blk[:, 0]
-        idx_s2_spatial = idx_s2.view(t, h_blk, w_blk)
-        idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
-
-        masks[1] = masks[1].view(-1)
-        mask_1 = (masks[1] == 1)
-        out_1 = hidden_states[mask_1]
-        out_idx_1 = original_indices[mask_1]
-
-        mask_2 = (mask_blk_vals == 2)
-        out_2 = feat_s2[mask_2]
-        out_idx_2 = idx_s2[mask_2]
-
-        mask_grid = mask_blk_vals.view(t, h_blk, w_blk)
-        mask_3 = (mask_grid[:, 0::2, 0::2] == 3).flatten()
-        out_3 = feat_s3[mask_3]
-        out_idx_3 = idx_s3[mask_3]
-
-        all_feats = torch.cat([out_1, out_2, out_3], dim=0)
-        all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
-
-        sort_order = torch.argsort(all_indices)
-        final_output = all_feats[sort_order]
-
-        return final_output
-
-    def _bicubic_downsample(self, hidden_states, t, h, w, scale):
-        """
-        使用 Bicubic 插值进行下采样。
-        输入: [N, 1176]
-        结构: 1176 = Channel(3) * Temporal(2) * Patch(14) * Patch(14)
-        """
-        # 使用 PyTorch 原生函数
-        import torch.nn.functional as F
-
-        if (h % scale) != 0 or (w % scale) != 0:
-            raise ValueError(f"下采样要求 h、w 能被 {scale} 整除")
-
-        device = hidden_states.device
-        dtype = hidden_states.dtype
-        
-        # 1. 解包 (Unpack)
-        # 对应 Qwen2-VL 的物理结构
-        patch_size = 14
-        temporal_size = 2
-        channels = 3
-        
-        # View: [t, h, w, 3, 2, 14, 14]
-        x = hidden_states.view(t, h, w, channels, temporal_size, patch_size, patch_size)
-
-        # 2. 拼成大图 (Reconstruct Full Image)
-        # 我们将 t 和 temporal_size 放到 Batch 维度，因为它们不需要跨时间插值，而是独立插值。
-        # 目标: [Batch, Channel, Height, Width]
-        # Batch = t * 2
-        # Channel = 3
-        # Height = h * 14
-        # Width = w * 14
-        
-        # Permute 顺序: 
-        # 原始: 0(t), 1(h), 2(w), 3(C), 4(T), 5(ph), 6(pw)
-        # 目标: 0(t), 4(T), 3(C), 1(h), 5(ph), 2(w), 6(pw)
-        full_img = x.permute(0, 4, 3, 1, 5, 2, 6).reshape(t * temporal_size, channels, h * patch_size, w * patch_size)
-        self._save_debug_image(full_img, folder="Render/Bicubic_FullImg")
-
-        # 3. Bicubic 下采样
-        target_h_pixels = (h // scale) * patch_size
-        target_w_pixels = (w // scale) * patch_size
-        
-        # F.interpolate 需要 Float 输入
-        full_img_float = full_img.float()
-        
-        # 执行插值
-        # antialias=True 是比较推荐的选项（PyTorch 1.11+ 支持），可以减少混叠
-        downsampled_img = F.interpolate(
-            full_img_float, 
-            size=(target_h_pixels, target_w_pixels),
-            mode='bicubic',
-            align_corners=False,
-            antialias=True
-        )
-
-        # 4. 还原结构 (Repack)
-        h_new, w_new = h // scale, w // scale
-        
-        # 拆分 Grid
-        # [t*2, 3, h_new*14, w_new*14] -> [t, 2, 3, h_new, 14, w_new, 14]
-        x_new = downsampled_img.view(t, temporal_size, channels, h_new, patch_size, w_new, patch_size)
-        
-        # Permute 回原始的内存布局: [t, h, w, C, T, P, P]
-        # 当前: 0(t), 1(T), 2(C), 3(h), 4(ph), 5(w), 6(pw)
-        # 目标: 0(t), 3(h), 5(w), 2(C), 1(T), 4(ph), 6(pw)
-        x_new = x_new.permute(0, 3, 5, 2, 1, 4, 6).contiguous()
-        
-        # Flatten 回 [N_new, 1176]
-        feat_s_out = x_new.view(-1, 1176).to(dtype=dtype)
-
-        return feat_s_out
-
-    
-
-    # def vectorized_merge_keep_order_block_major_bicubic(self, hidden_states, masks, grid_thw):
-    #     """
-    #     【测试专用】假设 hidden_states 是 2x2 Block-Major 排列的。
-    #     即：hidden_states.view(-1, 4, C) 中，dim=1 的 4 个元素分别对应左上、右上、左下、右下。
-    #     """
-    #     t, h, w = grid_thw[0]
-        
-    #     # 基础检查
-    #     if (h % 2) != 0 or (w % 2) != 0:
-    #         raise ValueError("Block-Major 下采样要求 h 和 w 都能被 2 整除")
-
-    #     C = hidden_states.shape[-1]
-    #     device = hidden_states.device
-    #     N = hidden_states.shape[0]
-
-    #     original_indices = torch.arange(N, device=device)
-
-    #     # 1. 准备 Block 视图
-    #     hidden_blk = hidden_states.view(-1, 4, C)
-    #     indices_blk = original_indices.view(-1, 4)
-    #     mask_blk_vals = masks[1].view(-1, 4)[:, 0]
-
-    #     # 2. 计算 Scale 2 (2x2 合并)
-    #     # 假设：这 4 个 token 就是物理上的 2x2 邻居
-    #     feat_s2 = self._bicubic_downsample_local_2x2(hidden_states)
-
-    #     # 3. 计算 Scale 3 (4x4 合并)
-    #     # 逻辑：Scale 3 是在 Scale 2 (h/2, w/2) 的基础上再做一次 2x2 下采样
-    #     # 注意：这里假设经过 Scale 2 合并后，剩下的 Grid (h/2, w/2) 是行优先排列的
-    #     if (h % 4) != 0 or (w % 4) != 0:
-    #         raise ValueError("Scale-3 下采样要求 h 和 w 都能被 4 整除")
-        
-    #     # 将 feat_s2 当作新的 feature map 进行全局下采样
-    #     feat_s3 = self._bicubic_downsample_global(feat_s2, t, h // 2, w // 2, scale=2)
-
-    #     # 4. 索引计算 (保持不变，用于排序)
-    #     h_blk, w_blk = h // 2, w // 2
-    #     idx_s2 = indices_blk[:, 0]
-        
-    #     # 这里的 reshape 需要小心，如果输入是 Block-Major，
-    #     # 这里的 idx_s2 实际上已经是按 Raster Scan 顺序排列的宏块索引了
-    #     idx_s2_spatial = idx_s2.view(t, h_blk, w_blk)
-    #     idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
-
-    #     # 5. 收集与合并
-    #     masks[1] = masks[1].view(-1)
-    #     mask_1 = (masks[1] == 1)
-    #     out_1 = hidden_states[mask_1]
-    #     out_idx_1 = original_indices[mask_1]
-
-    #     mask_2 = (mask_blk_vals == 2)
-    #     out_2 = feat_s2[mask_2]
-    #     out_idx_2 = idx_s2[mask_2]
-
-    #     mask_grid = mask_blk_vals.view(t, h_blk, w_blk)
-    #     mask_3 = (mask_grid[:, 0::2, 0::2] == 3).flatten()
-    #     out_3 = feat_s3[mask_3]
-    #     out_idx_3 = idx_s3[mask_3]
-
-    #     all_feats = torch.cat([out_1, out_2, out_3], dim=0)
-    #     all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
-
-    #     sort_order = torch.argsort(all_indices)
-    #     final_output = all_feats[sort_order]
-
-    #     return final_output
-
-    # def _bicubic_downsample_local_2x2(self, hidden_states):
-    #     """
-    #     局部 2x2 下采样：假设输入的每 4 个 token 构成一个 2x2 块。
-    #     (TL, TR, BL, BR) -> 拼成 28x28 -> Resize -> 14x14
-    #     """
-    #     import torch.nn.functional as F
-        
-    #     C = hidden_states.shape[-1] # 1176
-    #     dtype = hidden_states.dtype
-        
-    #     # 1. 解包结构
-    #     # Input: [N, 1176] -> View: [N/4, 4, 1176]
-    #     # 1176 = 3(C) * 2(T) * 14(H) * 14(W)
-    #     batch_groups = hidden_states.view(-1, 4, 3, 2, 14, 14)
-        
-    #     # 2. 拼图 (Stitching)
-    #     # dim 1 的 4 个元素对应: 0:TL, 1:TR, 2:BL, 3:BR
-    #     # 目标: [Batch, Channel, Time, 28, 28]
-        
-    #     # 这一步将 block 维度映射到空间维度
-    #     # [N/4, 2(GridH), 2(GridW), 3, 2, 14, 14]
-    #     spatial_groups = batch_groups.view(-1, 2, 2, 3, 2, 14, 14)
-        
-    #     # Permute: 
-    #     # 原: 0(Batch), 1(GH), 2(GW), 3(C), 4(T), 5(PH), 6(PW)
-    #     # 标: 0(Batch), 3(C), 4(T), 1(GH), 5(PH), 2(GW), 6(PW)
-    #     img_assembly = spatial_groups.permute(0, 3, 4, 1, 5, 2, 6)
-        
-    #     # Reshape: Merge GridH+PH -> 28, GridW+PW -> 28
-    #     # [Batch, 3, 2, 28, 28]
-    #     full_img = img_assembly.reshape(-1, 3, 2, 28, 28)
-        
-    #     eval_logger.info("Bicubic Downsample Local 2x2: triggered<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-        
-    #     # 3. 准备 Bicubic
-    #     # 将 Batch 和 Time 合并处理: [Batch*2, 3, 28, 28]
-    #     input_tensor = full_img.permute(0, 2, 1, 3, 4).reshape(-1, 3, 28, 28).float()
-    #     self._save_debug_image(input_tensor, folder="Render-22", max_keep=30)
-        
-    #     # 4. 执行下采样 28 -> 14
-    #     out_tensor = F.interpolate(
-    #         input_tensor, 
-    #         size=(14, 14), 
-    #         mode='bicubic', 
-    #         align_corners=False, 
-    #         antialias=True
-    #     ) # -> [Batch*2, 3, 14, 14]
-        
-    #     # 5. 还原结构
-    #     # [Batch, 2, 3, 14, 14]
-    #     out_tensor = out_tensor.view(-1, 2, 3, 14, 14)
-        
-    #     # Permute 回 1176 顺序: C(2), T(1), H(3), W(4)
-    #     # 原始 1176: C, T, H, W
-    #     out_tensor = out_tensor.permute(0, 2, 1, 3, 4).contiguous()
-        
-    #     # Flatten
-    #     return out_tensor.view(-1, C).to(dtype)
-
-    # def _bicubic_downsample_global(self, hidden_states, t, h, w, scale):
-    #     """
-    #     全局下采样（Row-Major 逻辑）：用于 Scale 3。
-    #     因为 Scale 2 输出的特征通常被视为构成了一个新的、更小的 Grid，这个 Grid 是 Raster Scan 的。
-    #     """
-    #     import torch.nn.functional as F
-        
-    #     C = hidden_states.shape[-1]
-    #     dtype = hidden_states.dtype
-    #     patch_size = 14
-        
-    #     # 1. View as Grid (Row Major)
-    #     x = hidden_states.view(t, h, w, 3, 2, 14, 14)
-        
-    #     # 2. Reconstruct Image
-    #     # [t, 2(T), 3(C), h*14, w*14]
-    #     full_img = x.permute(0, 4, 3, 1, 5, 2, 6).reshape(t * 2, 3, h * patch_size, w * patch_size)
-    #     self._save_debug_image(full_img, folder="Render_44", max_keep=30)
-        
-    #     # 3. Resize
-    #     target_h = (h // scale) * patch_size
-    #     target_w = (w // scale) * patch_size
-        
-    #     out_img = F.interpolate(
-    #         full_img.float(),
-    #         size=(target_h, target_w),
-    #         mode='bicubic',
-    #         align_corners=False,
-    #         antialias=True
-    #     )
-        
-    #     # 4. Repack
-    #     h_new, w_new = h // scale, w // scale
-    #     x_new = out_img.view(t, 2, 3, h_new, 14, w_new, 14)
-    #     x_new = x_new.permute(0, 3, 5, 2, 1, 4, 6).contiguous()
-        
-    #     return x_new.view(-1, C).to(dtype)
-
-    def _compute_z_order_keys(self, indices, width):
-        """
-        将行优先索引转换为 2x2 Block 优先的索引 (Z-Order)。
-        Formula: Block_ID * 4 + Inner_ID
-        """
-        # 1. 解析坐标 (y, x)
-        y = indices // width
-        x = indices % width
-        
-        # 2. 计算宏块坐标 (Block Coordinates)
-        by = y // 2
-        bx = x // 2
-        
-        # 3. 计算块内坐标 (Inner Coordinates)
-        iy = y % 2
-        ix = x % 2
-        
-        # 4. 计算 Z-Order Key
-        # 宏观上：Block 按照 (width // 2) 的步长排列
-        # 微观上：Block 内部按照 0(TL), 1(TR), 2(BL), 3(BR) 排列
-        block_width = width // 2
-        block_id = by * block_width + bx
-        inner_id = iy * 2 + ix
-        
-        return block_id * 4 + inner_id
-
-    def vectorized_merge_keep_order_block_major_bicubic(self, hidden_states, masks, grid_thw):
-        """
-        Block-Major 版本：
-        1. 先将 hidden_states (Block优先) 还原成一张完整的全分辨率大图 (Full Image)。
-        2. 基于这张大图，分别做 Bicubic 下采样得到 Scale-2 和 Scale-3 的特征。
-        """
-        t, h, w = grid_thw[0]
-        
-        # 1. 基础检查
-        if (h % 4) != 0 or (w % 4) != 0:
-            raise ValueError("为了同时支持 Scale-2/3，h 和 w 必须能被 4 整除")
-
-        C = hidden_states.shape[-1]
-        device = hidden_states.device
-        N = hidden_states.shape[0]
-
-        original_indices = torch.arange(N, device=device)
-
-        # 2. 准备 Mask 和索引视图 (Block-Major 假设)
-        # 这里的 view(-1, 4) 对应内存中连续的 4 个 token (2x2 Block)
-        hidden_blk = hidden_states.view(-1, 4, C)
-        indices_blk = original_indices.view(-1, 4)
-        mask_blk_vals = masks[1].view(-1, 4)[:, 0]
-
-        # =========================================================
-        # 核心修改：先还原全图，再基于全图做下采样
-        # =========================================================
-        
-        # A. 还原全分辨率大图 [Batch*2, 3, H_pixel, W_pixel]
-        # 这里的逻辑专门处理 "Block-Major" 的拼图方式
-        full_img = self._reconstruct_full_img_block_major(hidden_states, t, h, w)
-
-        # B. 基于同一张大图，进行不同尺度的下采样
-        # Scale 2: 目标尺寸 (h/2, w/2)
-        feat_s2 = self._downsample_from_full_img(full_img, t, h, w, scale=2, target_dtype=hidden_states.dtype)
-        
-        # Scale 3: 目标尺寸 (h/4, w/4)
-        feat_s3 = self._downsample_from_full_img(full_img, t, h, w, scale=4, target_dtype=hidden_states.dtype)
-
-        # =========================================================
-
-        # 3. 索引计算 (用于最后的排序恢复)
-        # Scale 2 索引: 取每个 Block (2x2) 的左上角 (第0个元素)
-        h_blk, w_blk = h // 2, w // 2
-        idx_s2 = indices_blk[:, 0] # [N/4]
-        
-        # Scale 3 索引: 在 Scale 2 的 grid 上再取 2x2 的左上角
-        # 注意：idx_s2 本身已经是按宏块 Raster Scan 排列的
-        idx_s2_spatial = idx_s2.view(t, h_blk, w_blk)
-        idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
-
-        # 4. 收集与合并 (Gather & Merge)
-        masks[1] = masks[1].view(-1)
-        
-        # Mask = 1: 保留原始 (从原 hidden_states 取，或者你也可以从 full_img 还原，但原数据不动最好)
-        mask_1 = (masks[1] == 1)
-        out_1 = hidden_states[mask_1]
-        out_idx_1 = original_indices[mask_1]
-
-        # Mask = 2: Scale 2
-        mask_2 = (mask_blk_vals == 2)
-        out_2 = feat_s2[mask_2]
-        out_idx_2 = idx_s2[mask_2]
-
-        # Mask = 3: Scale 3
-        # 需要将 mask 映射到 Scale 3 的网格
-        mask_grid = mask_blk_vals.view(t, h_blk, w_blk)
-        mask_3 = (mask_grid[:, 0::2, 0::2] == 3).flatten()
-        out_3 = feat_s3[mask_3]
-        out_idx_3 = idx_s3[mask_3]
-
-        # 5. 排序恢复
-        all_feats = torch.cat([out_1, out_2, out_3], dim=0)
-        all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
-
-        # sort_order = torch.argsort(all_indices)
-        # final_output = all_feats[sort_order]
-
-        z_order_keys = self._compute_z_order_keys(all_indices, w)
-        
-        # 根据 Z-Order Key 进行排序
-        sort_order = torch.argsort(z_order_keys)
-        final_output = all_feats[sort_order]
-
-        return final_output
-
-    def _reconstruct_full_img_block_major(self, hidden_states, t, h, w):
-        """
-        将 Block-Major 排列的 hidden_states 还原为完整图像。
-        Input: [N, 1176] (Block-Major: 每4个token组成一个2x2块)
-        Output: [Batch, 3, H_pixel, W_pixel] (Batch = t * temporal_size)
-        """
-        # 1. 结构参数
-        patch_size = 14
-        temporal_size = 2
-        channels = 3
-        
-        # 2. 多级 Reshape (这是 Block-Major 的核心拼图逻辑)
-        # hidden_states: [t * h * w, C]
-        # h 和 w 是 Token 数量。由于 Block-Major，我们按 (h/2, w/2) 个 "大块" 来切分。
-        # view: [t, grid_h, grid_w, block_h, block_w, C]
-        # block_h=2, block_w=2 对应那 "4" 个 token 的内部排列 (0,1 为第一行, 2,3 为第二行)
-        x = hidden_states.view(
-            t, 
-            h // 2, 
-            w // 2, 
-            2, 
-            2, 
-            channels, 
-            temporal_size, 
-            patch_size, 
-            patch_size
-        )
-
-        # 3. Permute 拼成大图
-        # 目标: [t, T, C, (GridH * BlockH * PH), (GridW * BlockW * PW)]
-        # 原始维度索引:
-        # 0:t, 1:gh, 2:gw, 3:bh, 4:bw, 5:C, 6:T, 7:ph, 8:pw
-        
-        # 目标顺序:
-        # 0:t
-        # 6:T
-        # 5:C
-        # 1:gh -> 3:bh -> 7:ph (高度方向融合)
-        # 2:gw -> 4:bw -> 8:pw (宽度方向融合)
-        
-        full_img = x.permute(0, 6, 5, 1, 3, 7, 2, 4, 8)
-        
-        # 4. Reshape 融合
-        # [t * T, C, h * 14, w * 14]
-        full_img = full_img.reshape(
-            t * temporal_size, 
-            channels, 
-            h * patch_size, 
-            w * patch_size
-        )
-        
-        # 可选：在这里插入 Debug 保存图片
-        self._save_debug_image(full_img, folder="Render_BlockMajor_Full", max_keep=30)
-        
-        return full_img
-
-    def _downsample_from_full_img(self, full_img, t, h, w, scale, target_dtype):
-        """
-        通用的下采样函数：输入已经是完整大图。
-        Output: [N_new, 1176] (Row-Major / Raster Scan Order)
-        注意：不论输入是 Block-Major 还是 Row-Major，输出通常都需要是 Raster Scan，
-        以便后续 Transformer 层处理。
-        """
-        import torch.nn.functional as F
-        
-        patch_size = 14
-        temporal_size = 2
-        channels = 3
-        
-        # 1. 计算目标像素尺寸
-        target_h_px = (h // scale) * patch_size
-        target_w_px = (w // scale) * patch_size
-        
-        # 2. Bicubic 下采样
-        # 输入必须是 float
-        img_float = full_img.float()
-        
-        downsampled = F.interpolate(
-            img_float,
-            size=(target_h_px, target_w_px),
-            mode='bicubic',
-            align_corners=False,
-            antialias=True
-        )
-        
-        # 3. 切分回 Patch (Repack to Raster Scan / Row-Major)
-        # 为什么切回 Row-Major？因为这是 Transformer 的标准输入格式。
-        # 即使之前的输入是 Block-Major，经过合并后，通常这层输出会被视为一个新的 Grid，
-        # 这个新 Grid 按标准行优先排列。
-        
-        h_new = h // scale
-        w_new = w // scale
-        
-        # [Batch, C, H, W] -> [t, T, C, h_new, p, w_new, p]
-        x_new = downsampled.view(t, temporal_size, channels, h_new, patch_size, w_new, patch_size)
-        
-        # Permute 回 1176 内存布局: [t, h, w, C, T, P, P] (标准的行优先布局)
-        # 原: 0(t), 1(T), 2(C), 3(h), 4(ph), 5(w), 6(pw)
-        # 标: 0(t), 3(h), 5(w), 2(C), 1(T), 4(ph), 6(pw)
-        x_new = x_new.permute(0, 3, 5, 2, 1, 4, 6).contiguous()
-        
-        # Flatten
-        return x_new.view(-1, channels * temporal_size * patch_size * patch_size).to(dtype=target_dtype)
-    
     def vectorized_merge_pos_embeds(self, position_embeddings, masks, grid_thw):
         """
         position_embeddings: list of 2 tensors, each shape [N, C]
@@ -1778,95 +1032,6 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         # return [pos_merged_0, pos_merged_1] 
         # 或者为了配合你原来的 tuple 结构
         return (pos_merged_0, pos_merged_1)
-    
-    
-    def vectorized_merge_pos_embeds_z_order(self, position_embeddings, masks, grid_thw):
-        """
-        与 vectorized_merge_pos_embeds 逻辑一致，但使用 Z-Order (2x2 Block优先) 进行排序。
-        确保 Pos Embed 与 Image Token 的排列顺序完全匹配。
-        """
-        # -------------------------------------------------
-        # 0. 预处理
-        # -------------------------------------------------
-        pos_all = torch.stack(position_embeddings, dim=1) # [N, 2, C]
-        
-        t, h, w = grid_thw[0]
-        C = pos_all.shape[-1] 
-        device = pos_all.device
-        N = pos_all.shape[0]
-
-        original_indices = torch.arange(N, device=device)
-
-        # -------------------------------------------------
-        # 1. 准备视图 & 2. 计算特征 Candidates
-        # (这部分逻辑保持不变，因为平均池化不依赖排序方式)
-        # -------------------------------------------------
-        pos_blk = pos_all.view(-1, 4, 2, C)
-        indices_blk = original_indices.view(-1, 4)
-        mask_blk_vals = masks[1].view(-1, 4)[:, 0]
-
-        # Scale 2 (Mean Pooling)
-        feat_s2 = pos_blk.mean(dim=1)
-        
-        # Scale 3 (Mean Pooling on Scale 2)
-        h_blk, w_blk = h // 2, w // 2
-        feat_s2_spatial = feat_s2.view(t, h_blk, w_blk, 2, C)
-        
-        # 调整维度以适应 avg_pool2d: (t, 2*C, h, w)
-        feat_for_pool = feat_s2_spatial.permute(0, 3, 4, 1, 2).reshape(t, 2 * C, h_blk, w_blk)
-        feat_pooled = torch.nn.functional.avg_pool2d(feat_for_pool, kernel_size=2, stride=2)
-        
-        # 还原维度
-        feat_s3_spatial = feat_pooled.view(t, 2, C, h_blk//2, w_blk//2)
-        feat_s3 = feat_s3_spatial.permute(0, 3, 4, 1, 2).flatten(0, 2)
-
-        # -------------------------------------------------
-        # 3. 计算索引 Candidates (左上角锚点)
-        # -------------------------------------------------
-        idx_s2 = indices_blk[:, 0]
-        idx_s2_spatial = idx_s2.view(t, h_blk, w_blk)
-        idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
-
-        # -------------------------------------------------
-        # 4. 收集 (Gathering)
-        # -------------------------------------------------
-        # Mask = 1
-        mask_1 = (masks[1].view(-1) == 1)
-        out_1 = pos_all[mask_1]
-        out_idx_1 = original_indices[mask_1]
-
-        # Mask = 2
-        mask_2 = (mask_blk_vals == 2)
-        out_2 = feat_s2[mask_2]
-        out_idx_2 = idx_s2[mask_2]
-
-        # Mask = 3
-        mask_grid = mask_blk_vals.view(t, h_blk, w_blk)
-        mask_3 = (mask_grid[:, 0::2, 0::2] == 3).flatten()
-        out_3 = feat_s3[mask_3]
-        out_idx_3 = idx_s3[mask_3]
-
-        # -------------------------------------------------
-        # 5. 恢复顺序 (Restoring Order with Z-Curve)
-        # -------------------------------------------------
-        all_feats = torch.cat([out_1, out_2, out_3], dim=0) # (Total, 2, C)
-        all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
-
-        # ★★★ 关键修改：计算 Z-Order Keys 并排序 ★★★
-        z_keys = self._compute_z_order_keys(all_indices, w)
-        sort_order = torch.argsort(z_keys)
-        
-        final_output = all_feats[sort_order]
-
-        # -------------------------------------------------
-        # 6. 后处理：拆分
-        # -------------------------------------------------
-        pos_merged_0 = final_output[:, 0, :]
-        pos_merged_1 = final_output[:, 1, :]
-
-        return (pos_merged_0, pos_merged_1)
-
-
     @auto_docstring
     def forward(
         self,
@@ -1919,7 +1084,7 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         # eval_logger.info("masks: {}", output_dict[0][0][0])
         masks = copy.deepcopy(output_dict[0])
         torch.set_printoptions(threshold=float('inf'), linewidth=1000, profile="full")
-        # eval_logger.info("masks[1]:{}", masks[1])      
+        eval_logger.info("masks[1]:{}", masks[1])      
         torch.set_printoptions(profile="default")
         
         # patch_merged = []
@@ -2004,16 +1169,7 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         #                     sum = sum + hidden_states[i + j]
         #                     masks[1][i + j] = 0  # 标记为已处理
         #         patch_merged.append(sum / 16)
-
-
-
-        # patch_merged = self.vectorized_merge_keep_order(hidden_states, copy.deepcopy(output_dict[0]), grid_thw)
-        patch_merged = self.vectorized_merge_keep_order_block_major_bicubic(hidden_states, copy.deepcopy(output_dict[0]), grid_thw)
-        # patch_merged = self.vectorized_merge_keep_order_bicubic(hidden_states, copy.deepcopy(output_dict[0]), grid_thw)
-        
-        
-        
-        
+        patch_merged = self.vectorized_merge_keep_order(hidden_states, copy.deepcopy(output_dict[0]), grid_thw)
         # for i in range(h):
         #     for j in range(w):
         #         val = output_dict[0][0][0][i, j].item()
@@ -2041,7 +1197,7 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         
         # patch_merged = [:]
         # patch_merged = torch.cat(patch_merged, dim=0)
-        # eval_logger.info("patch_merged shape: {}", patch_merged.shape)
+        eval_logger.info("patch_merged shape: {}", patch_merged.shape)
         hidden_states = self.patch_embed(patch_merged)
         # eval_logger.info("after patch_embed hidden_states shape: {}", hidden_states.shape)
         # hidden_states = hidden_states[:hidden_states.shape[0] - (hidden_states.shape[0] % 4)]
@@ -2076,118 +1232,118 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         # combined = torch.cat([position_embeddings[0][i + j],
         #               position_embeddings[1][i + j]], dim=-1)
         # eval_logger.info("combined position_embeddings shape: {}", combined.shape)
-        # for i in range(position_embeddings[0].shape[0]):
-        #     if masks[1][i] == 1:
-        #         position_embeddings_merged[0].append(position_embeddings[0][i])
-        #         position_embeddings_merged[1].append(position_embeddings[1][i])
-        #     elif masks[1][i] == 0:
-        #         continue
-        #     elif masks[1][i] == 2:
-        #         sum0 = torch.zeros_like(position_embeddings[0][i])
-        #         sum1 = torch.zeros_like(position_embeddings[1][i])
-        #         if i % 4 == 2:
-        #             for j in range(2):
-        #                 sum0 = sum0 + position_embeddings[0][i + j]
-        #                 sum1 = sum1 + position_embeddings[1][i + j]
-        #                 masks[1][i + j] = 0  # 标记为已处理
-        #             for j in range(2*masks[0].shape[1] - 2, 2 * masks[0].shape[1]):
-        #                 sum0 = sum0 + position_embeddings[0][i + j]
-        #                 sum1 = sum1 + position_embeddings[1][i + j]
-        #                 masks[1][i + j] = 0  # 标记为已处理
-        #         elif i % 4 == 0:
-        #             for j in range(4):
-        #                 sum0 = sum0 + position_embeddings[0][i + j]
-        #                 sum1 = sum1 + position_embeddings[1][i + j]
-        #                 masks[1][i + j] = 0  # 标记为已处理
-        #         elif i % 4 == 1:
-        #             for j in [0, 2, 3, 5]:
-        #                 sum0 = sum0 + position_embeddings[0][i + j]
-        #                 sum1 = sum1 + position_embeddings[1][i + j]
-        #                 masks[1][i + j] = 0  # 标记为已处理
-        #         elif i % 4 == 3:
-        #             for j in [0, -2 + 2*masks[0].shape[1], 3, 1 + 2*masks[0].shape[1]]:
-        #                 sum0 = sum0 + position_embeddings[0][i + j]
-        #                 sum1 = sum1 + position_embeddings[1][i + j]
-        #                 masks[1][i + j] = 0  # 标记为已处理
-        #         position_embeddings_merged[0].append(sum0 / 4)
-        #         position_embeddings_merged[1].append(sum1 / 4)
-        #     elif masks[1][i] == 3:
-        #         sum0 = torch.zeros_like(position_embeddings[0][i])
-        #         sum1 = torch.zeros_like(position_embeddings[1][i])
-        #         if i % 4 == 2:
-        #             for k in range(2):
-        #                 for j in range(2 + 2*masks[0].shape[1] * k):
-        #                     sum0 = sum0 + position_embeddings[0][i + j]
-        #                     sum1 = sum1 + position_embeddings[1][i + j]
-        #                     masks[1][i + j] = 0  # 标记为已处理
-        #                 for j in range(2*masks[0].shape[1] - 2 + 2*masks[0].shape[1] * k, 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k):
-        #                     sum0 = sum0 + position_embeddings[0][i + j]
-        #                     sum1 = sum1 + position_embeddings[1][i + j]
-        #                     masks[1][i + j] = 0  # 标记为已处理
-        #                 for j in range(4 + 2*masks[0].shape[1] * k, 6 + 2*masks[0].shape[1] * k):
-        #                     sum0 = sum0 + position_embeddings[0][i + j]
-        #                     sum1 = sum1 + position_embeddings[1][i + j]
-        #                     masks[1][i + j] = 0  # 标记为已处理
-        #                 for j in range(2 + 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k, 2 * masks[0].shape[1] + 4 + 2*masks[0].shape[1] * k):
-        #                     sum0 = sum0 + position_embeddings[0][i + j]
-        #                     sum1 = sum1 + position_embeddings[1][i + j]
-        #                     masks[1][i + j] = 0  # 标记为已处理
-        #         elif i % 4 == 3:
-        #             for k in range(2):
-        #                 sum0 = sum0 + position_embeddings[0][i + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 sum0 = sum0 + position_embeddings[0][i + 7 + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i + 7 + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i + 7 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 sum0 = sum0 + position_embeddings[0][i - 2 + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i - 2 + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i - 2 + 2 * masks[0].shape[1] + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 sum0 = sum0 + position_embeddings[0][i + 5 + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i + 5 + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i + 5 + 2 * masks[0].shape[1] + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 for j in range(3 + 2*masks[0].shape[1] * k, 5 + 2*masks[0].shape[1] * k):
-        #                     sum0 = sum0 + position_embeddings[0][i + j]
-        #                     sum1 = sum1 + position_embeddings[1][i + j]
-        #                     masks[1][i + j] = 0  # 标记为已处理
-        #                 for j in range(1 + 2*masks[0].shape[1] + 2*masks[0].shape[1] * k, 3 + 2 * masks[0].shape[1]  + 2*masks[0].shape[1] * k):
-        #                     sum0 = sum0 + position_embeddings[0][i + j]
-        #                     sum1 = sum1 + position_embeddings[1][i + j]
-        #                     masks[1][i + j] = 0  # 标记为已处理
-        #         elif i % 4 == 0:
-        #             for j in range(8):
-        #                 sum0 = sum0 + position_embeddings[0][i + j]
-        #                 sum1 = sum1 + position_embeddings[1][i + j]
-        #                 masks[1][i + j] = 0  # 标记为已处理
-        #             for j in range(2*masks[0].shape[1], 2 * masks[0].shape[1] + 8):
-        #                 sum0 = sum0 + position_embeddings[0][i + j]
-        #                 sum1 = sum1 + position_embeddings[1][i + j]
-        #                 masks[1][i + j] = 0  # 标记为已处理
-        #         elif i % 4 == 1:
-        #             for k in range(2):
-        #                 sum0 = sum0 + position_embeddings[0][i + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 sum0 = sum0 + position_embeddings[0][i + 7 + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i + 7 + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i + 7 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 sum0 = sum0 + position_embeddings[0][i + 2 + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i + 2 + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i + 2 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 sum0 = sum0 + position_embeddings[0][i + 9 + 2 * masks[0].shape[1] * k]
-        #                 sum1 = sum1 + position_embeddings[1][i + 9 + 2 * masks[0].shape[1] * k]
-        #                 masks[1][i + 9 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
-        #                 for j in range(3 + 2*masks[0].shape[1] * k, 7 + 2*masks[0].shape[1] * k):
-        #                 # for j in range(3 + 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k, 7 + 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k):
-        #                     sum0 = sum0 + position_embeddings[0][i + j]
-        #                     sum1 = sum1 + position_embeddings[1][i + j]
-        #                     masks[1][i + j] = 0  # 标记为已处理
-        #         position_embeddings_merged[0].append(sum0 / 16)
-        #         position_embeddings_merged[1].append(sum1 / 16)
+        for i in range(position_embeddings[0].shape[0]):
+            if masks[1][i] == 1:
+                position_embeddings_merged[0].append(position_embeddings[0][i])
+                position_embeddings_merged[1].append(position_embeddings[1][i])
+            elif masks[1][i] == 0:
+                continue
+            elif masks[1][i] == 2:
+                sum0 = torch.zeros_like(position_embeddings[0][i])
+                sum1 = torch.zeros_like(position_embeddings[1][i])
+                if i % 4 == 2:
+                    for j in range(2):
+                        sum0 = sum0 + position_embeddings[0][i + j]
+                        sum1 = sum1 + position_embeddings[1][i + j]
+                        masks[1][i + j] = 0  # 标记为已处理
+                    for j in range(2*masks[0].shape[1] - 2, 2 * masks[0].shape[1]):
+                        sum0 = sum0 + position_embeddings[0][i + j]
+                        sum1 = sum1 + position_embeddings[1][i + j]
+                        masks[1][i + j] = 0  # 标记为已处理
+                elif i % 4 == 0:
+                    for j in range(4):
+                        sum0 = sum0 + position_embeddings[0][i + j]
+                        sum1 = sum1 + position_embeddings[1][i + j]
+                        masks[1][i + j] = 0  # 标记为已处理
+                elif i % 4 == 1:
+                    for j in [0, 2, 3, 5]:
+                        sum0 = sum0 + position_embeddings[0][i + j]
+                        sum1 = sum1 + position_embeddings[1][i + j]
+                        masks[1][i + j] = 0  # 标记为已处理
+                elif i % 4 == 3:
+                    for j in [0, -2 + 2*masks[0].shape[1], 3, 1 + 2*masks[0].shape[1]]:
+                        sum0 = sum0 + position_embeddings[0][i + j]
+                        sum1 = sum1 + position_embeddings[1][i + j]
+                        masks[1][i + j] = 0  # 标记为已处理
+                position_embeddings_merged[0].append(sum0 / 4)
+                position_embeddings_merged[1].append(sum1 / 4)
+            elif masks[1][i] == 3:
+                sum0 = torch.zeros_like(position_embeddings[0][i])
+                sum1 = torch.zeros_like(position_embeddings[1][i])
+                if i % 4 == 2:
+                    for k in range(2):
+                        for j in range(2 + 2*masks[0].shape[1] * k):
+                            sum0 = sum0 + position_embeddings[0][i + j]
+                            sum1 = sum1 + position_embeddings[1][i + j]
+                            masks[1][i + j] = 0  # 标记为已处理
+                        for j in range(2*masks[0].shape[1] - 2 + 2*masks[0].shape[1] * k, 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k):
+                            sum0 = sum0 + position_embeddings[0][i + j]
+                            sum1 = sum1 + position_embeddings[1][i + j]
+                            masks[1][i + j] = 0  # 标记为已处理
+                        for j in range(4 + 2*masks[0].shape[1] * k, 6 + 2*masks[0].shape[1] * k):
+                            sum0 = sum0 + position_embeddings[0][i + j]
+                            sum1 = sum1 + position_embeddings[1][i + j]
+                            masks[1][i + j] = 0  # 标记为已处理
+                        for j in range(2 + 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k, 2 * masks[0].shape[1] + 4 + 2*masks[0].shape[1] * k):
+                            sum0 = sum0 + position_embeddings[0][i + j]
+                            sum1 = sum1 + position_embeddings[1][i + j]
+                            masks[1][i + j] = 0  # 标记为已处理
+                elif i % 4 == 3:
+                    for k in range(2):
+                        sum0 = sum0 + position_embeddings[0][i + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i + 2 * masks[0].shape[1] * k]
+                        masks[1][i + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        sum0 = sum0 + position_embeddings[0][i + 7 + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i + 7 + 2 * masks[0].shape[1] * k]
+                        masks[1][i + 7 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        sum0 = sum0 + position_embeddings[0][i - 2 + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i - 2 + 2 * masks[0].shape[1] * k]
+                        masks[1][i - 2 + 2 * masks[0].shape[1] + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        sum0 = sum0 + position_embeddings[0][i + 5 + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i + 5 + 2 * masks[0].shape[1] * k]
+                        masks[1][i + 5 + 2 * masks[0].shape[1] + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        for j in range(3 + 2*masks[0].shape[1] * k, 5 + 2*masks[0].shape[1] * k):
+                            sum0 = sum0 + position_embeddings[0][i + j]
+                            sum1 = sum1 + position_embeddings[1][i + j]
+                            masks[1][i + j] = 0  # 标记为已处理
+                        for j in range(1 + 2*masks[0].shape[1] + 2*masks[0].shape[1] * k, 3 + 2 * masks[0].shape[1]  + 2*masks[0].shape[1] * k):
+                            sum0 = sum0 + position_embeddings[0][i + j]
+                            sum1 = sum1 + position_embeddings[1][i + j]
+                            masks[1][i + j] = 0  # 标记为已处理
+                elif i % 4 == 0:
+                    for j in range(8):
+                        sum0 = sum0 + position_embeddings[0][i + j]
+                        sum1 = sum1 + position_embeddings[1][i + j]
+                        masks[1][i + j] = 0  # 标记为已处理
+                    for j in range(2*masks[0].shape[1], 2 * masks[0].shape[1] + 8):
+                        sum0 = sum0 + position_embeddings[0][i + j]
+                        sum1 = sum1 + position_embeddings[1][i + j]
+                        masks[1][i + j] = 0  # 标记为已处理
+                elif i % 4 == 1:
+                    for k in range(2):
+                        sum0 = sum0 + position_embeddings[0][i + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i + 2 * masks[0].shape[1] * k]
+                        masks[1][i + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        sum0 = sum0 + position_embeddings[0][i + 7 + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i + 7 + 2 * masks[0].shape[1] * k]
+                        masks[1][i + 7 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        sum0 = sum0 + position_embeddings[0][i + 2 + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i + 2 + 2 * masks[0].shape[1] * k]
+                        masks[1][i + 2 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        sum0 = sum0 + position_embeddings[0][i + 9 + 2 * masks[0].shape[1] * k]
+                        sum1 = sum1 + position_embeddings[1][i + 9 + 2 * masks[0].shape[1] * k]
+                        masks[1][i + 9 + 2 * masks[0].shape[1] * k] = 0  # 标记为已处理
+                        for j in range(3 + 2*masks[0].shape[1] * k, 7 + 2*masks[0].shape[1] * k):
+                        # for j in range(3 + 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k, 7 + 2 * masks[0].shape[1] + 2*masks[0].shape[1] * k):
+                            sum0 = sum0 + position_embeddings[0][i + j]
+                            sum1 = sum1 + position_embeddings[1][i + j]
+                            masks[1][i + j] = 0  # 标记为已处理
+                position_embeddings_merged[0].append(sum0 / 16)
+                position_embeddings_merged[1].append(sum1 / 16)
 
-        # # eval_logger.info("position_embeddings_merged : {}", (len(position_embeddings_merged[0]), len(position_embeddings_merged[1])))
-        # position_embeddings_merged = (torch.stack(position_embeddings_merged[0], dim=0), torch.stack(position_embeddings_merged[1], dim=0))
-        position_embeddings_merged = self.vectorized_merge_pos_embeds_z_order(position_embeddings, copy.deepcopy(output_dict[0]), grid_thw)
+        # eval_logger.info("position_embeddings_merged : {}", (len(position_embeddings_merged[0]), len(position_embeddings_merged[1])))
+        position_embeddings_merged = (torch.stack(position_embeddings_merged[0], dim=0), torch.stack(position_embeddings_merged[1], dim=0))
+        # position_embeddings_merged = self.vectorized_merge_pos_embeds(position_embeddings, copy.deepcopy(output_dict[0]), grid_thw)
         # position_embeddings_merged = (position_embeddings_merged[0][:position_embeddings_merged[0].shape[0] - (position_embeddings_merged[0].shape[0] % 4)], position_embeddings_merged[1][:position_embeddings_merged[1].shape[0] - (position_embeddings_merged[1].shape[0] % 4)])
         pad_len = 4 - (position_embeddings_merged[0].shape[0] % 4)
         if pad_len > 0 and pad_len < 4:
@@ -2220,9 +1376,9 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         
         # 返回 [1, h, w]
         grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=grid_thw.device).unsqueeze(0)
-        # eval_logger.info(f"hidden_states shape:{hidden_states.shape}")
-        # eval_logger.info("grid_new_thw: {}", grid_new_thw)
-        # eval_logger.info("grid_thw_original: {}", grid_thw)
+        eval_logger.info(f"hidden_states shape:{hidden_states.shape}")
+        eval_logger.info("grid_new_thw: {}", grid_new_thw)
+        eval_logger.info("grid_thw_original: {}", grid_thw)
         # eval_logger.info("grid_thw new shape: {}, grid_thw: {}", grid_new_thw.shape, grid_new_thw)
     # return grid_thw
 
@@ -2566,7 +1722,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
                     h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
                     w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
                     pos = torch.stack([t_index, h_index, w_index])
-                    # eval_logger.info(f"pos shape:{pos.shape}, pos:{pos}")
+                    eval_logger.info(f"pos shape:{pos.shape}, pos:{pos}")
                     llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
                     st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 
@@ -2576,7 +1732,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
                     llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
                 llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
-                # eval_logger.info(f"llm_positions shape:{llm_positions.shape}, llm_positions:{llm_positions}")
+                eval_logger.info(f"llm_positions shape:{llm_positions.shape}, llm_positions:{llm_positions}")
                 position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
                 mrope_position_deltas.append(llm_positions.max() + 1 - len(total_input_ids[i]))
             mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
@@ -3065,8 +2221,8 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                 or (past_key_values is None or past_key_values.get_seq_length() == 0)
             )
             if (prefill_compiled_stage or prefill_noncompiled_stage) or self.model.rope_deltas is None:
-                # eval_logger.info("start")
-                # eval_logger.info(f"grid_new_thw: {grid_new_thw is not None} before filter")
+                eval_logger.info("start")
+                eval_logger.info(f"grid_new_thw: {grid_new_thw is not None} before filter")
                 if grid_new_thw is not None:
                     image_grid_thw = grid_new_thw
                 eval_logger.info(f"grid_new_thw: {grid_new_thw} after filter")

@@ -978,6 +978,10 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         sort_order = torch.argsort(all_indices)
         final_output = all_feats[sort_order]
 
+        # Duplicate each kept/merged token 4 times along the first (token) dimension.
+        # Example: [a,b] -> [a,a,a,a,b,b,b,b]
+        final_output = final_output.repeat_interleave(4, dim=0)
+
         return final_output
     
     def _lanczos_downsample(self, hidden_states, t, h, w, scale):
@@ -1214,6 +1218,10 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
 
         sort_order = torch.argsort(all_indices)
         final_output = all_feats[sort_order]
+
+        #Enable: Duplicate each kept/merged token 4 times along the first (token) dimension.
+        # Example: [a,b] -> [a,a,a,a,b,b,b,b]
+        final_output = final_output.repeat_interleave(4, dim=0)
 
         return final_output
 
@@ -1556,14 +1564,13 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         all_feats = torch.cat([out_1, out_2, out_3], dim=0)
         all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
 
-        # sort_order = torch.argsort(all_indices)
-        # final_output = all_feats[sort_order]
-
-        z_order_keys = self._compute_z_order_keys(all_indices, w)
-        
-        # 根据 Z-Order Key 进行排序
-        sort_order = torch.argsort(z_order_keys)
+        sort_order = torch.argsort(all_indices)
         final_output = all_feats[sort_order]
+
+        # Duplicate each kept/merged token 4 times along the first (token) dimension.
+        # Example: [a,b] -> [a,a,a,a,b,b,b,b]
+        # Keep dtype/device unchanged.
+        final_output = final_output.repeat_interleave(4, dim=0)
 
         return final_output
 
@@ -1773,6 +1780,10 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         # 使用 unbind 或者切片拆分
         pos_merged_0 = final_output[:, 0, :]
         pos_merged_1 = final_output[:, 1, :]
+
+        # 如果需要每个 token 重复 4 次以匹配图像 token
+        pos_merged_0 = pos_merged_0.repeat_interleave(4, dim=0)
+        pos_merged_1 = pos_merged_1.repeat_interleave(4, dim=0)
 
         # 如果需要转回 list
         # return [pos_merged_0, pos_merged_1] 
@@ -2187,7 +2198,9 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
 
         # # eval_logger.info("position_embeddings_merged : {}", (len(position_embeddings_merged[0]), len(position_embeddings_merged[1])))
         # position_embeddings_merged = (torch.stack(position_embeddings_merged[0], dim=0), torch.stack(position_embeddings_merged[1], dim=0))
-        position_embeddings_merged = self.vectorized_merge_pos_embeds_z_order(position_embeddings, copy.deepcopy(output_dict[0]), grid_thw)
+        position_embeddings_merged = self.vectorized_merge_pos_embeds(position_embeddings, copy.deepcopy(output_dict[0]), grid_thw)
+        #position_embeddings_merged = self.vectorized_merge_pos_embeds_z_order(position_embeddings, copy.deepcopy(output_dict[0]), grid_thw)
+        
         # position_embeddings_merged = (position_embeddings_merged[0][:position_embeddings_merged[0].shape[0] - (position_embeddings_merged[0].shape[0] % 4)], position_embeddings_merged[1][:position_embeddings_merged[1].shape[0] - (position_embeddings_merged[1].shape[0] % 4)])
         pad_len = 4 - (position_embeddings_merged[0].shape[0] % 4)
         if pad_len > 0 and pad_len < 4:
@@ -2748,7 +2761,10 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             special_image_mask = input_ids == self.config.image_token_id
             special_video_mask = input_ids == self.config.video_token_id
 
+
         n_image_tokens = special_image_mask.sum()
+        
+
         special_image_mask = special_image_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
         if image_features is not None and inputs_embeds[special_image_mask].numel() != image_features.numel():
             raise ValueError(

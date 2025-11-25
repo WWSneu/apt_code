@@ -472,6 +472,10 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         if sum%4 !=0:
             sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         # sum = sum - (sum%4)
+
+        #flag: DEBUG.>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        sum=sum*4
+        
         total = sum
         eval_logger.info("sum in imageprocessor: {}", sum)
         # flatten_patches = flatten_patches[:sum, :]

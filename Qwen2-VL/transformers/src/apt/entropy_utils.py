@@ -445,23 +445,47 @@ def select_patches_by_budget(entropy_maps, budget: int):
     if k <= 0:
         # No splits allowed: all kept as L3
         masks = {}
+        largest_ps = patch_sizes[-1]
+        
         for ps in patch_sizes:
-            if ps == ps_l1:
-                m = torch.zeros_like(ent_l1)
+            # Calculate target shape based on padded dimensions to ensure consistency
+            # with mask_0 which forces padding in the image processor
+            scale_ratio = ps // ps_l1
+            h_m = H_pad // scale_ratio
+            w_m = W_pad // scale_ratio
+            
+            if ps == largest_ps:
+                m = torch.ones((B, h_m, w_m), device=device)
             else:
-                # If the requested patch size exists in entropy_maps, match its shape
-                if ps in entropy_maps:
-                    m = torch.zeros_like(entropy_maps[ps])
-                else:
-                    m = torch.zeros((B, H3, W3), device=device)
+                m = torch.zeros((B, h_m, w_m), device=device)
+                
             if not is_batched:
                 m = m.squeeze(0)
             masks[ps] = m.float()
-        largest_ps = patch_sizes[-1]
-        m3 = torch.ones((1, H3, W3), device=device) if not is_batched else torch.ones((B, H3, W3), device=device)
+
+        # Construct masks[0] (Label Map) for ImageProcessor compatibility
+        # When k<=0, everything is L3, so mask_0 should be all 3.0
+        # We use the m from largest_ps (which is ones)
+        m3 = masks[largest_ps]
         if not is_batched:
-            m3 = m3.squeeze(0)
-        masks[largest_ps] = m3.float()
+             m3 = m3.unsqueeze(0)
+             
+        m3_for_up = m3
+        if m3_for_up.dim() == 3:
+             m3_for_up = m3_for_up.unsqueeze(1) # (B, 1, H3, W3)
+        
+        # Note: m3 corresponds to largest_ps. 
+        # If largest_ps is L3 (scale 4), we upsample by 4.
+        # If largest_ps is L2 (scale 2), we upsample by 2.
+        scale_factor = largest_ps // ps_l1
+        
+        mask_0 = F.interpolate(m3_for_up, scale_factor=scale_factor, mode='nearest').squeeze(1) * 3.0
+        
+        if not is_batched:
+            masks[0] = mask_0.squeeze(0)
+        else:
+            masks[0] = mask_0
+
         return masks
 
     # Scores

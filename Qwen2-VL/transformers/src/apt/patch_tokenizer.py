@@ -121,12 +121,14 @@ class PatchTokenizer(nn.Module):
 
             base_small_tokens = H1 * W1
             base_tokens = H3 * W3
+            eval_logger.info(f"!!!!!!!!!!!Acceptable minimum alpha for budget mode: {base_tokens / base_small_tokens:.4f}")
 
             # Desired budget = fraction * base_small_tokens
             budget = int(max(0, round(self.alpha * float(base_small_tokens))))
 
             # k: maximum splits allowed (each split increases tokens by 3, starting from all-L3)
             k = (budget - base_tokens) // 3
+            eval_logger.info(f"!!!!!!!!!!!Budget mode: base_tokens={base_tokens}, base_small_tokens={base_small_tokens}, budget={budget}, k={k}")
             if k < 0:
                 k = 0
 

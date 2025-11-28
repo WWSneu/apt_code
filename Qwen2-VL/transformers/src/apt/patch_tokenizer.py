@@ -118,7 +118,7 @@ class PatchTokenizer(nn.Module):
             largest_map = importance_maps[largest_ps]
             H1, W1 = smallest_map.shape[1], smallest_map.shape[2]
             H3, W3 = largest_map.shape[1], largest_map.shape[2]
-
+            
             base_small_tokens = H1 * W1
             base_tokens = H3 * W3
             eval_logger.info(f"!!!!!!!!!!!Acceptable minimum alpha for budget mode: {base_tokens / base_small_tokens:.4f}")
@@ -171,7 +171,7 @@ class PatchTokenizer(nn.Module):
         # eval_logger.info(f"seqlens before int: {seqlens}")
         seqlens = seqlens.int().tolist()
         # eval_logger.info(f"seqlens after int: {seqlens}")
-
+        
         return masks, output_mask, seqlens
 
     def construct_patch_groups(
@@ -285,9 +285,10 @@ class PatchTokenizer(nn.Module):
         """
         # Unnormalize the images using vectorized operations
         with torch.no_grad():
+            eval_logger.info(f"images is normed? {images}")
             # Apply unnormalization directly to the batch
             unnormalized_images = self.unnorm(images)
-            
+            eval_logger.info(f"unnormalized_images: {unnormalized_images}")
             # Scale to [0, 255] range for computation
             unnormalized_images = torch.clamp(unnormalized_images * 255.0, 0, 255)
             

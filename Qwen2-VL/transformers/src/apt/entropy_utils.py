@@ -411,12 +411,12 @@ def select_patches_by_budget(entropy_maps, budget: int):
     # Calculate required padding for L1 to cover L3 target
     # We need H1_pad / 4 >= target_h3  => H1_pad >= target_h3 * 4
     req_h = max(H1, target_h2 * 2, target_h3 * 4)
-    req_w = max(W1, target_w2 * 2, target_w3 * 4)
+    req_w = max(W1, target_w2 * 2, target_w3 * 4)   
     
-    pad_h = req_h - H1
-    pad_w = req_w - W1
+    pad_h = req_h - H1                              
+    pad_w = req_w - W1                                  
     
-    ent_l1_t = ent_l1.unsqueeze(1)  # (B,1,H1,W1)
+    ent_l1_t = ent_l1.unsqueeze(1)  # (B,1,H1,W1) 
     
     if pad_h > 0 or pad_w > 0:
         # Pad with a value that won't affect max pooling selection too much, 
@@ -544,7 +544,7 @@ def select_patches_by_budget(entropy_maps, budget: int):
     # keep_l3_up = keep_l3_up[:, :H1, :W1]
     
     mask_0 = keep_l1 * 1.0 + keep_l2_up * 2.0 + keep_l3_up * 3.0
-
+    eval_logger.info(f"mask_0: {mask_0}")
     # Map to provided patch sizes (expecting at least three levels)
     masks = {}
     if not is_batched:

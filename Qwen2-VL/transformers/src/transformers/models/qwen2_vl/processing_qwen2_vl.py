@@ -172,29 +172,29 @@ class Qwen2VLProcessor(ProcessorMixin):
             index = 0
             for i in range(len(text)):
                 while self.image_token in text[i]:
-                    # num_image_tokens = image_grid_thw[index].prod() // merge_length
+                    num_image_tokens = image_grid_thw[index].prod() // merge_length
                     # num_image_tokens = 
                     # eval_logger.info("num_image_tokens: {}", num_image_tokens)
                     # eval_logger.info("image_grid_thw[index].prod(): {}", image_grid_thw[index].prod())
                     # eval_logger.info("merge_length: {}", merge_length)
-                    cnt = {1:0, 2:0, 3:0}
+                    # cnt = {1:0, 2:0, 3:0}
                     # eval_logger.info("output_dict[0]: {}", output_dict[0])
-                    for j in range(output_dict[0][0].shape[0]):
-                        for k in range(output_dict[0][0].shape[1]):
-                            if output_dict[0][0][j, k].item() == 1:
-                                cnt[1] += 1
-                            elif output_dict[0][0][j, k].item() == 2:
-                                cnt[2] += 1
-                            elif output_dict[0][0][j, k].item() == 3:
-                                cnt[3] += 1
-                    sum = cnt[1] + cnt[2]/4 + cnt[3]/16
-                    # sum = sum - (sum%4)
-                    if sum%4 !=0:
-                        sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                    # for j in range(output_dict[0][0].shape[0]):
+                    #     for k in range(output_dict[0][0].shape[1]):
+                    #         if output_dict[0][0][j, k].item() == 1:
+                    #             cnt[1] += 1
+                    #         elif output_dict[0][0][j, k].item() == 2:
+                    #             cnt[2] += 1
+                    #         elif output_dict[0][0][j, k].item() == 3:
+                    #             cnt[3] += 1
+                    # sum = cnt[1] + cnt[2]/4 + cnt[3]/16
+                    # # sum = sum - (sum%4)
+                    # if sum%4 !=0:
+                    #     sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
                     
-                    sum = sum*4    #flag: we multiply 4 to match the token number in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                    # sum = sum*4    #flag: we multiply 4 to match the token number in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
                     
-                    num_image_tokens = int(sum // merge_length)
+                    # num_image_tokens = int(sum // merge_length)
                     eval_logger.info("num_image_tokens: {}", num_image_tokens)
                     text[i] = text[i].replace(self.image_token, "<|placeholder|>" * num_image_tokens, 1)
                     index += 1

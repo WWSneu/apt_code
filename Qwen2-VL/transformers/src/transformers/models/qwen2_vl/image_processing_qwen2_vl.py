@@ -330,18 +330,19 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         
         masks, _, seqlens = pt.construct_masks(batch_maps)
 
-        if patch_selection_method == 'budget':
-             # Pad patches tensor to match mask dimensions
-             # masks[0] is the label map with shape (B, H_p, W_p) corresponding to base_patch_size
-             mask_h, mask_w = masks[0].shape[-2:]
-             current_h, current_w = patches.shape[-2] // patch_size, patches.shape[-1] // patch_size
+        # if patch_selection_method == 'budget':
+        #      # Pad patches tensor to match mask dimensions
+        #      # masks[0] is the label map with shape (B, H_p, W_p) corresponding to base_patch_size
+        #      mask_h, mask_w = masks[0].shape[-2:]
+        #      current_h, current_w = patches.shape[-2] // patch_size, patches.shape[-1] // patch_size
              
-             if mask_h > current_h or mask_w > current_w:
-                 pad_h_pixels = (mask_h - current_h) * patch_size
-                 pad_w_pixels = (mask_w - current_w) * patch_size
-                 patches = torch.nn.functional.pad(patches, (0, pad_w_pixels, 0, pad_h_pixels), mode='constant', value=0)
+        #      if mask_h > current_h or mask_w > current_w:
+        #          pad_h_pixels = (mask_h - current_h) * patch_size
+        #          pad_w_pixels = (mask_w - current_w) * patch_size
+        #          patches = torch.nn.functional.pad(patches, (0, pad_w_pixels, 0, pad_h_pixels), mode='constant', value=0)
 
-        output_dict = pt.construct_patch_groups(patches, masks)
+        # output_dict = pt.construct_patch_groups(patches, masks)
+
         # output.append(output_dict)
 
         # # output_dict = construct_patch_masks(patches, masks)
@@ -469,29 +470,29 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         # eval_logger.info(f"flatten_masks0 shape: {masks[0].shape}")
         # eval_logger.info(f"flatten_patches: {flatten_patches}")
         # eval_logger.info(f"flatten_masks0: {masks[0]}")
-        if sum%4 !=0:
-            sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-        # sum = sum - (sum%4)
+        # if sum%4 !=0:
+        #     sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        # # sum = sum - (sum%4)
 
-        #flag: DEBUG.>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-        sum=sum*4
+        # #flag: DEBUG.>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        # sum=sum*4
         
-        total = sum
-        eval_logger.info("sum in imageprocessor: {}", sum)
-        # flatten_patches = flatten_patches[:sum, :]
-        # eval_logger.info("total patches after merge: {}", total)
-        factors = []
-        for i in range(1, int(math.sqrt(total)) + 1):
-            if total % i == 0:
-                h, w = i, total // i 
-                factors.append((h, w))
-        even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
-        best_pair = min(even_factors, key=lambda x: abs(x[0] - x[1]))
-        height, width = best_pair
+        # total = sum
+        # eval_logger.info("sum in imageprocessor: {}", sum)
+        # # flatten_patches = flatten_patches[:sum, :]
+        # # eval_logger.info("total patches after merge: {}", total)
+        # factors = []
+        # for i in range(1, int(math.sqrt(total)) + 1):
+        #     if total % i == 0:
+        #         h, w = i, total // i 
+        #         factors.append((h, w))
+        # even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
+        # best_pair = min(even_factors, key=lambda x: abs(x[0] - x[1]))
+        # height, width = best_pair
     
-        # 返回 [1, h, w]
-        grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=device).unsqueeze(0)
-
+        # # 返回 [1, h, w]
+        # grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=device).unsqueeze(0)
+        grid_new_thw = []
         # Log stats
         try:
             orig_h, orig_w = get_image_size(images[0], channel_dim=input_data_format)
@@ -501,7 +502,6 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
                 f"Image Stats: "
                 f"Original: {orig_h}x{orig_w} ({orig_patches_14} patches), "
                 f"Resized: {resized_height}x{resized_width} ({resized_patches_14} patches), "
-                f"Final APT: {total} patches"
             )
         except Exception as e:
             eval_logger.warning(f"Failed to log image stats: {e}")

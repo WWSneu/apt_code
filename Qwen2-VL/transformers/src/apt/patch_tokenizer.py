@@ -285,10 +285,10 @@ class PatchTokenizer(nn.Module):
         """
         # Unnormalize the images using vectorized operations
         with torch.no_grad():
-            eval_logger.info(f"images is normed? {images}")
+            # eval_logger.info(f"images is normed? {images}")
             # Apply unnormalization directly to the batch
             unnormalized_images = self.unnorm(images)
-            eval_logger.info(f"unnormalized_images: {unnormalized_images}")
+            # eval_logger.info(f"unnormalized_images: {unnormalized_images}")
             # Scale to [0, 255] range for computation
             unnormalized_images = torch.clamp(unnormalized_images * 255.0, 0, 255)
             

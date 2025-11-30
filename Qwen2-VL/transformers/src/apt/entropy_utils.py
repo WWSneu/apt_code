@@ -523,7 +523,7 @@ def select_patches_by_budget(entropy_maps, budget: int):
 
         split3_up_l2 = F.interpolate(split3.unsqueeze(0).unsqueeze(0).float(), size=(H2, W2), mode='nearest').squeeze()
         keep2 = (split3_up_l2.bool() & (~split2)).float()
-
+        
         split2_up_l1 = F.interpolate(split2.unsqueeze(0).unsqueeze(0).float(), size=(H_pad, W_pad), mode='nearest').squeeze()
         keep1 = split2_up_l1.float()
 

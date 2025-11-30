@@ -404,7 +404,7 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
                 # Update resized_height/width for subsequent calculations
                 resized_height = patches.shape[-2]
                 resized_width = patches.shape[-1]
-
+        eval_logger.info(f"patches :{patches}")
         if patches.shape[0] % temporal_patch_size != 0:
             repeats = np.repeat(
                 patches[-1][np.newaxis], temporal_patch_size - (patches.shape[0] % temporal_patch_size), axis=0

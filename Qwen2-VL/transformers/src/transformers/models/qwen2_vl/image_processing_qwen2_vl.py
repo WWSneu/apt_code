@@ -302,33 +302,33 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             image = to_channel_dimension_format(image, data_format, input_channel_dim=input_data_format)
             processed_images.append(image)
 
-        # eval_logger.info(f"processed_images shape: {np.array(processed_images).shape}")
-        patches = processed_images
-        # patches.to(device)
+        # # eval_logger.info(f"processed_images shape: {np.array(processed_images).shape}")
+        # patches = processed_images
+        # # patches.to(device)
         
         # Set defaults for patch selection parameters
         patch_selection_method = patch_selection_method if patch_selection_method is not None else self.patch_selection_method
         alpha = alpha if alpha is not None else self.alpha
         
-        pt= PatchTokenizer(
-            num_scales=3,
-            base_patch_size=14,
-            image_size=(patches[0].shape[-2], patches[0].shape[-1]),
-            thresholds=[3, 2],
-            mean = [0.48145466, 0.4578275, 0.40821073],
-            std = [0.26862954, 0.26130258, 0.27577711],
-            patch_selection_method=patch_selection_method,
-            alpha=alpha,
-        )
-        patches = np.array(patches)  # 转换为 NumPy 数组
-        patches = torch.from_numpy(patches).to(device)        # torch.set_printoptions(threshold=10000, linewidth=200)  # threshold 设置显示元素数量，linewidth 设置行宽
-        pt.to(device)
-        batch_maps = pt.compute_importance_maps(patches)
-        # eval_logger.info(f"Computed batch_maps 14: {batch_maps[14]}, Computed batch_maps 28: {batch_maps[28]}, Computed batch_maps 56: {batch_maps[56]}")
-        # eval_logger.info(f"batch_maps 14 shape: {batch_maps[14].shape}, batch_maps 28 shape: {batch_maps[28].shape}, batch_maps 56 shape: {batch_maps[56].shape}")
-        # output = []
+        # pt= PatchTokenizer(
+        #     num_scales=3,
+        #     base_patch_size=14,
+        #     image_size=(patches[0].shape[-2], patches[0].shape[-1]),
+        #     thresholds=[3, 2],
+        #     mean = [0.48145466, 0.4578275, 0.40821073],
+        #     std = [0.26862954, 0.26130258, 0.27577711],
+        #     patch_selection_method=patch_selection_method,
+        #     alpha=alpha,
+        # )
+        # patches = np.array(patches)  # 转换为 NumPy 数组
+        # patches = torch.from_numpy(patches).to(device)        # torch.set_printoptions(threshold=10000, linewidth=200)  # threshold 设置显示元素数量，linewidth 设置行宽
+        # pt.to(device)
+        # batch_maps = pt.compute_importance_maps(patches)
+        # # eval_logger.info(f"Computed batch_maps 14: {batch_maps[14]}, Computed batch_maps 28: {batch_maps[28]}, Computed batch_maps 56: {batch_maps[56]}")
+        # # eval_logger.info(f"batch_maps 14 shape: {batch_maps[14].shape}, batch_maps 28 shape: {batch_maps[28].shape}, batch_maps 56 shape: {batch_maps[56].shape}")
+        # # output = []
         
-        masks, _, seqlens = pt.construct_masks(batch_maps)
+        # masks, _, seqlens = pt.construct_masks(batch_maps)
 
         # if patch_selection_method == 'budget':
         #      # Pad patches tensor to match mask dimensions
@@ -386,24 +386,24 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             patches = patches.transpose(0, 3, 1, 2)
         
         # Check if padding is needed based on masks[0] (for budget mode)
-        if patch_selection_method == 'budget':
-            mask_h, mask_w = masks[0].shape[-2:]
-            current_h, current_w = patches.shape[-2] // patch_size, patches.shape[-1] // patch_size
+        # if patch_selection_method == 'budget':
+        #     mask_h, mask_w = masks[0].shape[-2:]
+        #     current_h, current_w = patches.shape[-2] // patch_size, patches.shape[-1] // patch_size
             
-            if mask_h > current_h or mask_w > current_w:
-                pad_h_pixels = (mask_h - current_h) * patch_size
-                pad_w_pixels = (mask_w - current_w) * patch_size
+        #     if mask_h > current_h or mask_w > current_w:
+        #         pad_h_pixels = (mask_h - current_h) * patch_size
+        #         pad_w_pixels = (mask_w - current_w) * patch_size
                 
-                # Pad patches (numpy array)
-                # patches: (B, C, H, W)
-                # Pad H and W with zeros
-                # np.pad expects ((before_1, after_1), (before_2, after_2), ...)
-                # Axis 0: Batch, Axis 1: Channel, Axis 2: Height, Axis 3: Width
-                patches = np.pad(patches, ((0,0), (0,0), (0, pad_h_pixels), (0, pad_w_pixels)), mode='constant', constant_values=0)
+        #         # Pad patches (numpy array)
+        #         # patches: (B, C, H, W)
+        #         # Pad H and W with zeros
+        #         # np.pad expects ((before_1, after_1), (before_2, after_2), ...)
+        #         # Axis 0: Batch, Axis 1: Channel, Axis 2: Height, Axis 3: Width
+        #         patches = np.pad(patches, ((0,0), (0,0), (0, pad_h_pixels), (0, pad_w_pixels)), mode='constant', constant_values=0)
                 
-                # Update resized_height/width for subsequent calculations
-                resized_height = patches.shape[-2]
-                resized_width = patches.shape[-1]
+        #         # Update resized_height/width for subsequent calculations
+        #         resized_height = patches.shape[-2]
+        #         resized_width = patches.shape[-1]
         eval_logger.info(f"patches :{patches}")
         if patches.shape[0] % temporal_patch_size != 0:
             repeats = np.repeat(
@@ -429,31 +429,31 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             patch_size,
         )
         # eval_logger.info(f"masks before: {masks[0]}")
-        masks[0] = masks[0].squeeze(0)
-        cnt = {1:0, 2:0, 3:0}
-        for i in range(masks[0].shape[0]):
-            for j in range(masks[0].shape[1]):
-                if masks[0][i, j].item() == 1:
-                    cnt[1] += 1
-                elif masks[0][i, j].item() == 2:
-                    cnt[2] += 1
-                elif masks[0][i, j].item() == 3:
-                    cnt[3] += 1
-        # for i in range(3):
-        #     eval_logger.info(f"mask num {i+1} count: {cnt[i+1]}")
-        sum = int(cnt[1] + cnt[2]/4 + cnt[3]/16)
-        # eval_logger.info(f"sum in imageprocessor: {sum}")
-        masks[1] = masks[0].reshape(
-            grid_t,
-            1,
-            1,
-            grid_h // merge_size,
-            merge_size,
-            1,
-            grid_w // merge_size,
-            merge_size,
-            1,
-        )
+        # masks[0] = masks[0].squeeze(0)
+        # cnt = {1:0, 2:0, 3:0}
+        # for i in range(masks[0].shape[0]):
+        #     for j in range(masks[0].shape[1]):
+        #         if masks[0][i, j].item() == 1:
+        #             cnt[1] += 1
+        #         elif masks[0][i, j].item() == 2:
+        #             cnt[2] += 1
+        #         elif masks[0][i, j].item() == 3:
+        #             cnt[3] += 1
+        # # for i in range(3):
+        # #     eval_logger.info(f"mask num {i+1} count: {cnt[i+1]}")
+        # sum = int(cnt[1] + cnt[2]/4 + cnt[3]/16)
+        # # eval_logger.info(f"sum in imageprocessor: {sum}")
+        # masks[1] = masks[0].reshape(
+        #     grid_t,
+        #     1,
+        #     1,
+        #     grid_h // merge_size,
+        #     merge_size,
+        #     1,
+        #     grid_w // merge_size,
+        #     merge_size,
+        #     1,
+        # )
         # eval_logger.info(f"masks shape after reshape: {masks[0].shape}")
         # eval_logger.info(f"masks after: {masks[0]}")
         # eval_logger.info(f"patches shape after reshape: {patches.shape}")
@@ -462,49 +462,54 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             grid_t * grid_h * grid_w, channel * temporal_patch_size * patch_size * patch_size
         )
         # flatten_patches = patches.reshape(grid_t * grid_h * grid_w, -1)
-        masks[1] = masks[1].permute(0, 3, 6, 4, 7, 2, 1, 5, 8)
-        masks[1] = masks[1].reshape(
-            grid_t * grid_h * grid_w, 1
-        )
+        # masks[1] = masks[1].permute(0, 3, 6, 4, 7, 2, 1, 5, 8)
+        # masks[1] = masks[1].reshape(
+        #     grid_t * grid_h * grid_w, 1
+        # )
         # eval_logger.info(f"flatten_patches shape: {flatten_patches.shape}")
         # eval_logger.info(f"flatten_masks0 shape: {masks[0].shape}")
         # eval_logger.info(f"flatten_patches: {flatten_patches}")
         # eval_logger.info(f"flatten_masks0: {masks[0]}")
-        # if sum%4 !=0:
-        #     sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        keep_ratio = 0.25
+        sum = int(flatten_patches.shape[0]*keep_ratio)  # Use the actual number of patches after reshaping
+        if sum%4 !=0:
+            sum = sum + (4 - sum%4)       #flag: we ceil to multiple of 4. preparing for later padding in model forward.<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         # # sum = sum - (sum%4)
 
         # #flag: DEBUG.>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         # sum=sum*4
-        
-        # total = sum
-        # eval_logger.info("sum in imageprocessor: {}", sum)
-        # # flatten_patches = flatten_patches[:sum, :]
-        # # eval_logger.info("total patches after merge: {}", total)
-        # factors = []
-        # for i in range(1, int(math.sqrt(total)) + 1):
-        #     if total % i == 0:
-        #         h, w = i, total // i 
-        #         factors.append((h, w))
-        # even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
-        # best_pair = min(even_factors, key=lambda x: abs(x[0] - x[1]))
-        # height, width = best_pair
-    
-        # # 返回 [1, h, w]
-        # grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=device).unsqueeze(0)
-        grid_new_thw = []
+        # num_keep = int(num_tokens * keep_ratio)
+
+        total = sum
+        eval_logger.info("sum in imageprocessor: {}", sum)
+        # flatten_patches = flatten_patches[:sum, :]
+        # eval_logger.info("total patches after merge: {}", total)
+        factors = []
+        for i in range(1, int(math.sqrt(total)) + 1):
+            if total % i == 0:
+                h, w = i, total // i 
+                factors.append((h, w))
+        even_factors = [(h, w) for h, w in factors if h % 2 == 0 and w % 2 == 0]
+        best_pair = min(even_factors, key=lambda x: abs(x[0] - x[1]))
+        height, width = best_pair
+        # height = 1
+        # width = total
+        # 返回 [1, h, w]
+        grid_new_thw = torch.tensor([1, height, width], dtype=torch.long, device=device).unsqueeze(0)
+        # grid_new_thw = []
+        masks = []
         # Log stats
-        try:
-            orig_h, orig_w = get_image_size(images[0], channel_dim=input_data_format)
-            orig_patches_14 = (orig_h // 14) * (orig_w // 14)
-            resized_patches_14 = (resized_height // 14) * (resized_width // 14)
-            eval_logger.info(
-                f"Image Stats: "
-                f"Original: {orig_h}x{orig_w} ({orig_patches_14} patches), "
-                f"Resized: {resized_height}x{resized_width} ({resized_patches_14} patches), "
-            )
-        except Exception as e:
-            eval_logger.warning(f"Failed to log image stats: {e}")
+        # try:
+        #     orig_h, orig_w = get_image_size(images[0], channel_dim=input_data_format)
+        #     orig_patches_14 = (orig_h // 14) * (orig_w // 14)
+        #     resized_patches_14 = (resized_height // 14) * (resized_width // 14)
+        #     eval_logger.info(
+        #         f"Image Stats: "
+        #         f"Original: {orig_h}x{orig_w} ({orig_patches_14} patches), "
+        #         f"Resized: {resized_height}x{resized_width} ({resized_patches_14} patches), "
+        #     )
+        # except Exception as e:
+        #     eval_logger.warning(f"Failed to log image stats: {e}")
 
         return flatten_patches, (grid_t, grid_h, grid_w), processed_images, masks, grid_new_thw
 

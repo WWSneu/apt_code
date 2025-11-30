@@ -742,60 +742,68 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         # ==============================================================================
         # 这一步就是你想要的：利用下采样逻辑，把被合并区域的坐标，替换为左上角的坐标
         
-        # 2.1 构建 Anchor Map (借用之前的逻辑)
-        t, h, w = grid_thw[0] # 假设 batch=1 或 grid 一致
-        device = pos_ids.device
-        masks = output_dict[0] # 获取 masks
-        # 准备索引和Mask
-        original_indices = torch.arange(pos_ids.shape[0], device=device)
+        # # 2.1 构建 Anchor Map (借用之前的逻辑)
+        # t, h, w = grid_thw[0] # 假设 batch=1 或 grid 一致
+        # device = pos_ids.device
+        # masks = output_dict[0] # 获取 masks
+        # # 准备索引和Mask
+        # original_indices = torch.arange(pos_ids.shape[0], device=device)
         
-        # Block 视图
-        indices_blk = original_indices.view(-1, 4)
-        # 注意：要用 Raster-to-Block 转换后的 mask
-        # 如果 masks[1] 已经是 block-major，直接用；否则要处理
-        mask_blk_vals = masks[1].view(-1, 4)[:, 0] 
+        # # Block 视图
+        # indices_blk = original_indices.view(-1, 4)
+        # # 注意：要用 Raster-to-Block 转换后的 mask
+        # # 如果 masks[1] 已经是 block-major，直接用；否则要处理
+        # mask_blk_vals = masks[1].view(-1, 4)[:, 0] 
 
-        # --- 计算 Scale 2 的锚点索引 ---
-        # 锚点 = 左上角 (Block 的第0个元素)
-        # 这就是“取左上角坐标”的物理实现
-        idx_s2 = indices_blk[:, 0] 
+        # # --- 计算 Scale 2 的锚点索引 ---
+        # # 锚点 = 左上角 (Block 的第0个元素)
+        # # 这就是“取左上角坐标”的物理实现
+        # idx_s2 = indices_blk[:, 0] 
 
-        # --- 计算 Scale 3 的锚点索引 ---
-        h_blk, w_blk = h // 2, w // 2
-        # 还原到 Grid 视图找 4x4 的左上角
-        idx_s2_spatial = idx_s2.view(t, h_blk, w_blk)
+        # # --- 计算 Scale 3 的锚点索引 ---
+        # h_blk, w_blk = h // 2, w // 2
+        # # 还原到 Grid 视图找 4x4 的左上角
+        # idx_s2_spatial = idx_s2.view(t, h_blk, w_blk)
+        # # idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
         # idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
-        idx_s3 = idx_s2_spatial[:, 0::2, 0::2].flatten()
-        # --- 执行筛选 ---
+        # # --- 执行筛选 ---
         
-        # Mask 1 (保留原始)
-        mask_1 = (masks[1].view(-1) == 1)
-        out_idx_1 = original_indices[mask_1]
+        # # Mask 1 (保留原始)
+        # mask_1 = (masks[1].view(-1) == 1)
+        # out_idx_1 = original_indices[mask_1]
         
-        # Mask 2 (保留 2x2 左上角)
-        mask_2 = (mask_blk_vals == 2)
-        out_idx_2 = idx_s2[mask_2]
+        # # Mask 2 (保留 2x2 左上角)
+        # mask_2 = (mask_blk_vals == 2)
+        # out_idx_2 = idx_s2[mask_2]
         
-        # Mask 3 (保留 4x4 左上角)
-        # 需要构建 mask_grid
-        mask_grid = mask_blk_vals.view(t, h_blk, w_blk)
-        mask_3 = (mask_grid[:, 0::2, 0::2] == 3).flatten()
-        out_idx_3 = idx_s3[mask_3]
+        # # Mask 3 (保留 4x4 左上角)
+        # # 需要构建 mask_grid
+        # mask_grid = mask_blk_vals.view(t, h_blk, w_blk)
+        # mask_3 = (mask_grid[:, 0::2, 0::2] == 3).flatten()
+        # out_idx_3 = idx_s3[mask_3]
         
-        # --- 合并并排序 ---
-        # 这一步拿到了所有“幸存者”在原始序列中的 Index
-        all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
-        all_indices, _ = torch.sort(all_indices) # 排序保证顺序正确
+        # # --- 合并并排序 ---
+        # # 这一步拿到了所有“幸存者”在原始序列中的 Index
+        # all_indices = torch.cat([out_idx_1, out_idx_2, out_idx_3], dim=0)
+        # all_indices, _ = torch.sort(all_indices) # 排序保证顺序正确
         
-        # --- 提取坐标 ---
+        # # --- 提取坐标 ---
 
-        merged_pos_ids = pos_ids[all_indices]
+        # merged_pos_ids = pos_ids[all_indices]
         
+        # max_grid_size = grid_thw[:, 1:].max()
+        # rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
+        
+        # rotary_pos_emb = rotary_pos_emb_full[merged_pos_ids].flatten(1)
+
+        keep_indices = output_dict['keep_indices']
+        pos_ids = pos_ids.to(keep_indices.device)
+
+        merged_pos_ids = pos_ids[keep_indices]
         max_grid_size = grid_thw[:, 1:].max()
         rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
         
         rotary_pos_emb = rotary_pos_emb_full[merged_pos_ids].flatten(1)
-
         return rotary_pos_emb
 
     def merge_visual_features_optimized(self, hidden_states, output_dict, grid_thw):
@@ -1716,25 +1724,57 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         grid_thw (`torch.LongTensor` of shape `(num_images, 3)`):
             The temporal, height and width dimensions of feature shape for each image. Each row contains [t, h, w] values.
         """
+        # grid_new_thw = kwargs.get('grid_new_thw')
         output_dict = kwargs.get('output_dict')
         images_output = kwargs.get('images_output')
-        
+        output_dict = {}
         t, h, w = grid_thw[0]
         eval_logger.info("grid_thw: {}", grid_thw)
        
-        masks = copy.deepcopy(output_dict[0])
+        # masks = copy.deepcopy(output_dict[0])
         
-        patch_merged = self.vectorized_merge_keep_order_block_major_bicubic(hidden_states, copy.deepcopy(output_dict[0]), grid_thw)
+        # patch_merged = self.vectorized_merge_keep_order_block_major_bicubic(hidden_states, copy.deepcopy(output_dict[0]), grid_thw)
+        keep_ratio = 0.25
+        num_tokens = hidden_states.shape[0]
+        num_keep = int(num_tokens * keep_ratio)
         
+        # Generate random indices to keep
+        # torch.randperm generates a random permutation of integers from 0 to n-1
+        perm = torch.randperm(num_tokens, device=hidden_states.device)
+        keep_indices = perm[:num_keep]
         
-        hidden_states = self.patch_embed(patch_merged)
+        # Sort indices to maintain relative order (optional but recommended for RoPE)
+        keep_indices, _ = torch.sort(keep_indices)
         
+        # 2. Apply pruning
+        hidden_states = hidden_states[keep_indices]
+        
+        hidden_states = self.patch_embed(hidden_states)
+        pad_len = 4 - (hidden_states.shape[0] % 4)
+        if pad_len > 0 and pad_len < 4:  # 只有当不是4的倍数时才填充
+            # 复制最后 pad_len 个元素
+            padding = hidden_states[-pad_len:]
+            # 拼接填充到末尾
+            hidden_states = torch.cat([hidden_states, padding], dim=0)
+        
+        output_dict['keep_indices'] = keep_indices
+
 
         rotary_pos_emb = self.rot_pos_emb(grid_thw, output_dict)
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
         position_embeddings = (emb.cos(), emb.sin())
-        
-        cu_seqlens = torch.repeat_interleave(torch.tensor([len(position_embeddings[0])], device=emb.device), grid_thw[:, 0]).cumsum(
+        position_embeddings_merged = position_embeddings
+        pad_len = 4 - (position_embeddings_merged[0].shape[0] % 4)
+        if pad_len > 0 and pad_len < 4:
+            padding = position_embeddings_merged[0][-pad_len:]
+            position_embeddings_merged = (torch.cat([position_embeddings_merged[0], padding], dim=0), position_embeddings_merged[1])
+
+        # 对于第二个张量 (sin_emb)
+        pad_len = 4 - (position_embeddings_merged[1].shape[0] % 4)
+        if pad_len > 0 and pad_len < 4:
+            padding = position_embeddings_merged[1][-pad_len:]
+            position_embeddings_merged = (position_embeddings_merged[0], torch.cat([position_embeddings_merged[1], padding], dim=0))
+        cu_seqlens = torch.repeat_interleave(torch.tensor([len(position_embeddings_merged[0])], device=emb.device), grid_thw[:, 0]).cumsum(
             dim=0,
             # Select dtype based on the following factors:
             #  - FA2 requires that cu_seqlens_q must have dtype int32
@@ -1749,170 +1789,170 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
             hidden_states = blk(
                 hidden_states,
                 cu_seqlens=cu_seqlens,
-                position_embeddings=position_embeddings,
+                position_embeddings=position_embeddings_merged,
                 **kwargs,
             )
 
         
-        # ==============================================================================
-        # 2. 构建全图锚点映射 (Anchor Mapping)
-        # ==============================================================================
-        # 目标：生成一个 [N_original] 的索引表，告诉每个位置应该去 hidden_states 的哪一行取值
-        
-        t, h, w = grid_thw[0]
-        device = hidden_states.device
-        
-        # A. 初始化：每个像素默认指向自己 (Mask=1 的情况)
-        # Shape: [t, h, w]
-        anchor_map = torch.arange(t * h * w, device=device).view(t, h, w)
-        # eval_logger.info("anchor_map initial: {}", anchor_map)
-        # 准备 Mask 视图 (确保是全图尺寸)
-        # 假设 masks[1] 是原始的全长 mask
-
-        full_mask_grid = masks[0].view(t, h, w)
-        # eval_logger.info("full_mask_grid: {}", full_mask_grid)
-        # B. 处理 Scale 2 (2x2 合并) -> 填回 4 个位置
-        # 逻辑：如果一个 2x2 Block 的 Mask是2，那么这 4 个位置的锚点都设为左上角的 ID
-        h_2, w_2 = h // 2, w // 2
-        # view 成 Block 形状: [t, h/2, 2, w/2, 2]
-        anchor_blk_2 = anchor_map.view(t, h_2, 2, w_2, 2)
-        # eval_logger.info("anchor_blk_2 {}", anchor_blk_2)
-        mask_blk_2 = full_mask_grid.view(t, h_2, 2, w_2, 2)
-        # eval_logger.info("mask_blk_2 {}", mask_blk_2)
-
-        # 找到左上角 Mask == 2 的 Block
-        # mask_blk_2[..., 0, 0] shape: [t, h/2, w/2]
-        # is_merge_2 = (mask_blk_2[..., 0, 0] == 2) 
-        is_merge_2 = (mask_blk_2[:, :, 0, :, 0] == 2)
-        # 获取这些 Block 左上角的锚点 ID
-        # anchor_roots_2 shape: [t, h/2, w/2]
-        # anchor_roots_2 = anchor_blk_2[..., 0, 0]
-        anchor_roots_2 = anchor_blk_2[:, :, 0, :, 0]
-        # eval_logger.info("anchor_roots_2: {}", anchor_roots_2)
-        # 【核心广播】：将左上角 ID 复制到 2x2 区域
-        # 利用 bool索引赋值，会自动广播
-        # 我们需要先把 is_merge_2 扩展回 5 维以便广播，或者直接利用 PyTorch 的高级索引
-        # 这里的逻辑是：对于 is_merge_2 为 True 的位置，将 anchor_blk_2 的所有 2x2 子元素都设为 root
-        if is_merge_2.any():
-            # 扩展维度以便广播赋值: [t, h/2, 1, w/2, 1]
-            roots_expanded = anchor_roots_2.unsqueeze(-1).unsqueeze(-3)
-            # eval_logger.info("roots_expanded: {}", roots_expanded)
-            # 赋值：被选中的 Block 的所有 4 个位置都变成 Root ID
-            # 注意：这里利用了 view 的共享内存特性，修改 anchor_blk_2 会直接修改 anchor_map
-            # mask 必须也是扩展后的才能用来做索引，或者我们直接循环 (太慢)，或者用 mask广播
-            # eval_logger.info("roots_expanded shape: {}", roots_expanded.shape)
-            # 更高效的写法：使用 torch.where 或 索引
-            # 为了避免复杂的切片，我们可以先 clone 出 roots，然后 expand
-            target_vals = roots_expanded.expand(t, h_2, 2, w_2, 2)
-            # eval_logger.info("target_vals : {}", target_vals)
-            # 创建一个 bool mask 用于赋值 
-            mask_bool_2 = is_merge_2.unsqueeze(-1).unsqueeze(-3).expand(t, h_2, 2, w_2, 2)
-            # eval_logger.info("mask_bool_2: {}", mask_bool_2)
-            # eval_logger.info("mask_bool_2 shape: {}", mask_bool_2.shape)
-            # In-place 修改 anchor_map
-            anchor_blk_2[mask_bool_2] = target_vals[mask_bool_2]
-            # eval_logger.info("anchor_blk_2 after assignment: {}", anchor_blk_2)
-            # eval_logger.info("anchor_blk_2 after assignment: {}", anchor_blk_2)
-        # C. 处理 Scale 3 (4x4 合并) -> 填回 16 个位置
-        # 逻辑同上，但是针对 4x4
-        h_4, w_4 = h // 4, w // 4
-        anchor_blk_4 = anchor_map.view(t, h_4, 4, w_4, 4)
-        # eval_logger.info("anchor_blk_4: {}", anchor_blk_4)
-        mask_blk_4 = full_mask_grid.view(t, h_4, 4, w_4, 4)
-        # eval_logger.info("mask_blk_4: {}", mask_blk_4)
-
-        is_merge_3 = (mask_blk_4[:, :, 0, :, 0] == 3)
-        
-        if is_merge_3.any():
-            anchor_roots_3 = anchor_blk_4[:, :, 0, :, 0]
-            # eval_logger.info("anchor_roots_3: {}", anchor_roots_3)
-            # 扩展并广播
-            target_vals_3 = anchor_roots_3.unsqueeze(-1).unsqueeze(-3).expand(t, h_4, 4, w_4, 4)
-            # eval_logger.info("target_vals_3: {}", target_vals_3)
-            # 创建 bool mask
-            mask_bool_3 = is_merge_3.unsqueeze(-1).unsqueeze(-3).expand(t, h_4, 4, w_4, 4)
-            # # eval_logger.info("mask_bool_3: {}", mask_bool_3)
-            # 赋值
-            anchor_blk_4[mask_bool_3] = target_vals_3[mask_bool_3]
-            # # # eval_logger.info("anchor_blk_4 after assignment: {}", anchor_blk_4)
-
-        # ==============================================================================
-        # 3. 逆向寻址 (Reverse Lookup)
-        # ==============================================================================
-        # 此时 anchor_map 里的每一个数值，代表该像素应该去取哪个“原始ID”的特征。
-        # 而 hidden_states 是已经按照“原始ID”排序过的压缩列表。
-        # 我们需要找到 anchor_map 中每个 ID 在 hidden_states 对应的位置。
-
-
-        # map_view = anchor_map.view(t, h // 2, 2, w // 2, 2)
-        # map_block_major = map_view.permute(0, 1, 3, 2, 4).contiguous()
-        # # eval_logger.info("map_block_major : {}", map_block_major)
-        # target_anchors = map_block_major.view(-1)
-
-
-
-        # eval_logger.info("target_anchors after block major : {}", target_anchors)
-
-        # 展平地图
-        target_anchors = anchor_map.flatten() # [N_original]
-
-        # eval_logger.info("target_anchors shape: {}", target_anchors.shape)
-        # eval_logger.info("target_anchors: {}", target_anchors)
-        # 找出 hidden_states 中实际存在的那些 Unique Anchors (即合并后的 Keys)
-        # 因为 hidden_states 是排好序的，target_anchors 里的唯一值排序后就是 hidden_states 的 keys
-        # 使用 searchsorted 可以在 O(logN) 时间内找到下标
-        
-        # 1. 获取当前 hidden_states 对应的所有锚点 ID (也就是 target_anchors 去重并排序后的结果)
-        present_anchors = torch.unique(target_anchors, sorted=True)
-        # eval_logger.info("present_anchors after unique: {}", present_anchors)
-        # eval_logger.info("present_anchors after unique: {}", present_anchors)
-        # 2. 查找 target_anchors 在 present_anchors 中的下标
-        # 这就是我们需要用来索引 hidden_states 的下标
-        # 例如：target_anchors=[0, 0, 0, 0, 5...], present=[0, 5...] -> indices=[0, 0, 0, 0, 1...]
-        restore_indices = torch.searchsorted(present_anchors, target_anchors)
-        # eval_logger.info("restore_indices shape: {}", restore_indices.shape)
-        # eval_logger.info("restore_indices: {}", restore_indices)
-        # ==============================================================================
-        # 4. 填充回填 (Broadcasting)
-        # ==============================================================================
-        # 这一步就把压缩的 token 复制回去了
-        # eval_logger.info("hidden_states before restore shape: {}", hidden_states.shape)
         # # ==============================================================================
-
-        # # 3.5 [优化] 将 Raster Scan 索引重排为 Block-Major 索引
+        # # 2. 构建全图锚点映射 (Anchor Mapping)
         # # ==============================================================================
-        # # 你的灵感来源：patches.transpose(0, 3, 6, 4, 7, 2, 1, 5, 8)
-        # # 但这里我们处理的是 Token 索引，没有 channel 和 patch_size 维度，逻辑简化如下：
+        # # 目标：生成一个 [N_original] 的索引表，告诉每个位置应该去 hidden_states 的哪一行取值
         
-        # # 1. 还原为 2D 网格 (t, h, w)
-        indices_grid = restore_indices.view(t, h, w)
+        # t, h, w = grid_thw[0]
+        # device = hidden_states.device
         
-        # # 2. 拆分维度提取 2x2 Block
-        # # 原图被切分为 (h//2) * (w//2) 个 2x2 的 Block
-        # # Shape: [t, h_grid, 2, w_grid, 2]
-        indices_split = indices_grid.view(t, h // 2, 2, w // 2, 2)
-        
-        # # 3. 维度重排 (Permute) -> 变成 Block-Major
-        # # 目标：[t, h_grid, w_grid, 2, 2]
-        # # 这样内存里就是：[Block0的4个点], [Block1的4个点]...
-        indices_block_major = indices_split.permute(0, 1, 3, 2, 4).contiguous()
-        
-        # # 4. 展平
-        restore_indices = indices_block_major.view(-1)
+        # # A. 初始化：每个像素默认指向自己 (Mask=1 的情况)
+        # # Shape: [t, h, w]
+        # anchor_map = torch.arange(t * h * w, device=device).view(t, h, w)
+        # # eval_logger.info("anchor_map initial: {}", anchor_map)
+        # # 准备 Mask 视图 (确保是全图尺寸)
+        # # 假设 masks[1] 是原始的全长 mask
 
+        # full_mask_grid = masks[0].view(t, h, w)
+        # # eval_logger.info("full_mask_grid: {}", full_mask_grid)
+        # # B. 处理 Scale 2 (2x2 合并) -> 填回 4 个位置
+        # # 逻辑：如果一个 2x2 Block 的 Mask是2，那么这 4 个位置的锚点都设为左上角的 ID
+        # h_2, w_2 = h // 2, w // 2
+        # # view 成 Block 形状: [t, h/2, 2, w/2, 2]
+        # anchor_blk_2 = anchor_map.view(t, h_2, 2, w_2, 2)
+        # # eval_logger.info("anchor_blk_2 {}", anchor_blk_2)
+        # mask_blk_2 = full_mask_grid.view(t, h_2, 2, w_2, 2)
+        # # eval_logger.info("mask_blk_2 {}", mask_blk_2)
+
+        # # 找到左上角 Mask == 2 的 Block
+        # # mask_blk_2[..., 0, 0] shape: [t, h/2, w/2]
+        # # is_merge_2 = (mask_blk_2[..., 0, 0] == 2) 
+        # is_merge_2 = (mask_blk_2[:, :, 0, :, 0] == 2)
+        # # 获取这些 Block 左上角的锚点 ID
+        # # anchor_roots_2 shape: [t, h/2, w/2]
+        # # anchor_roots_2 = anchor_blk_2[..., 0, 0]
+        # anchor_roots_2 = anchor_blk_2[:, :, 0, :, 0]
+        # # eval_logger.info("anchor_roots_2: {}", anchor_roots_2)
+        # # 【核心广播】：将左上角 ID 复制到 2x2 区域
+        # # 利用 bool索引赋值，会自动广播
+        # # 我们需要先把 is_merge_2 扩展回 5 维以便广播，或者直接利用 PyTorch 的高级索引
+        # # 这里的逻辑是：对于 is_merge_2 为 True 的位置，将 anchor_blk_2 的所有 2x2 子元素都设为 root
+        # if is_merge_2.any():
+        #     # 扩展维度以便广播赋值: [t, h/2, 1, w/2, 1]
+        #     roots_expanded = anchor_roots_2.unsqueeze(-1).unsqueeze(-3)
+        #     # eval_logger.info("roots_expanded: {}", roots_expanded)
+        #     # 赋值：被选中的 Block 的所有 4 个位置都变成 Root ID
+        #     # 注意：这里利用了 view 的共享内存特性，修改 anchor_blk_2 会直接修改 anchor_map
+        #     # mask 必须也是扩展后的才能用来做索引，或者我们直接循环 (太慢)，或者用 mask广播
+        #     # eval_logger.info("roots_expanded shape: {}", roots_expanded.shape)
+        #     # 更高效的写法：使用 torch.where 或 索引
+        #     # 为了避免复杂的切片，我们可以先 clone 出 roots，然后 expand
+        #     target_vals = roots_expanded.expand(t, h_2, 2, w_2, 2)
+        #     # eval_logger.info("target_vals : {}", target_vals)
+        #     # 创建一个 bool mask 用于赋值 
+        #     mask_bool_2 = is_merge_2.unsqueeze(-1).unsqueeze(-3).expand(t, h_2, 2, w_2, 2)
+        #     # eval_logger.info("mask_bool_2: {}", mask_bool_2)
+        #     # eval_logger.info("mask_bool_2 shape: {}", mask_bool_2.shape)
+        #     # In-place 修改 anchor_map
+        #     anchor_blk_2[mask_bool_2] = target_vals[mask_bool_2]
+        #     # eval_logger.info("anchor_blk_2 after assignment: {}", anchor_blk_2)
+        #     # eval_logger.info("anchor_blk_2 after assignment: {}", anchor_blk_2)
+        # # C. 处理 Scale 3 (4x4 合并) -> 填回 16 个位置
+        # # 逻辑同上，但是针对 4x4
+        # h_4, w_4 = h // 4, w // 4
+        # anchor_blk_4 = anchor_map.view(t, h_4, 4, w_4, 4)
+        # # eval_logger.info("anchor_blk_4: {}", anchor_blk_4)
+        # mask_blk_4 = full_mask_grid.view(t, h_4, 4, w_4, 4)
+        # # eval_logger.info("mask_blk_4: {}", mask_blk_4)
+
+        # is_merge_3 = (mask_blk_4[:, :, 0, :, 0] == 3)
+        
+        # if is_merge_3.any():
+        #     anchor_roots_3 = anchor_blk_4[:, :, 0, :, 0]
+        #     # eval_logger.info("anchor_roots_3: {}", anchor_roots_3)
+        #     # 扩展并广播
+        #     target_vals_3 = anchor_roots_3.unsqueeze(-1).unsqueeze(-3).expand(t, h_4, 4, w_4, 4)
+        #     # eval_logger.info("target_vals_3: {}", target_vals_3)
+        #     # 创建 bool mask
+        #     mask_bool_3 = is_merge_3.unsqueeze(-1).unsqueeze(-3).expand(t, h_4, 4, w_4, 4)
+        #     # # eval_logger.info("mask_bool_3: {}", mask_bool_3)
+        #     # 赋值
+        #     anchor_blk_4[mask_bool_3] = target_vals_3[mask_bool_3]
+        #     # # # eval_logger.info("anchor_blk_4 after assignment: {}", anchor_blk_4)
+
+        # # ==============================================================================
+        # # 3. 逆向寻址 (Reverse Lookup)
+        # # ==============================================================================
+        # # 此时 anchor_map 里的每一个数值，代表该像素应该去取哪个“原始ID”的特征。
+        # # 而 hidden_states 是已经按照“原始ID”排序过的压缩列表。
+        # # 我们需要找到 anchor_map 中每个 ID 在 hidden_states 对应的位置。
+
+
+        # # map_view = anchor_map.view(t, h // 2, 2, w // 2, 2)
+        # # map_block_major = map_view.permute(0, 1, 3, 2, 4).contiguous()
+        # # # eval_logger.info("map_block_major : {}", map_block_major)
+        # # target_anchors = map_block_major.view(-1)
+
+
+
+        # # eval_logger.info("target_anchors after block major : {}", target_anchors)
+
+        # # 展平地图
+        # target_anchors = anchor_map.flatten() # [N_original]
+
+        # # eval_logger.info("target_anchors shape: {}", target_anchors.shape)
+        # # eval_logger.info("target_anchors: {}", target_anchors)
+        # # 找出 hidden_states 中实际存在的那些 Unique Anchors (即合并后的 Keys)
+        # # 因为 hidden_states 是排好序的，target_anchors 里的唯一值排序后就是 hidden_states 的 keys
+        # # 使用 searchsorted 可以在 O(logN) 时间内找到下标
+        
+        # # 1. 获取当前 hidden_states 对应的所有锚点 ID (也就是 target_anchors 去重并排序后的结果)
+        # present_anchors = torch.unique(target_anchors, sorted=True)
+        # # eval_logger.info("present_anchors after unique: {}", present_anchors)
+        # # eval_logger.info("present_anchors after unique: {}", present_anchors)
+        # # 2. 查找 target_anchors 在 present_anchors 中的下标
+        # # 这就是我们需要用来索引 hidden_states 的下标
+        # # 例如：target_anchors=[0, 0, 0, 0, 5...], present=[0, 5...] -> indices=[0, 0, 0, 0, 1...]
+        # restore_indices = torch.searchsorted(present_anchors, target_anchors)
+        # # eval_logger.info("restore_indices shape: {}", restore_indices.shape)
+        # # eval_logger.info("restore_indices: {}", restore_indices)
         # # ==============================================================================
         # # 4. 填充回填 (Broadcasting)
         # # ==============================================================================
-        # # 现在 restore_indices 已经是 Block-Major 的顺序了
-        # # 取出来的 hidden_states 自然也就是 Block-Major 的，无需再后处理！
-        
-        hidden_states = hidden_states[restore_indices]
+        # # 这一步就把压缩的 token 复制回去了
+        # # eval_logger.info("hidden_states before restore shape: {}", hidden_states.shape)
+        # # # ==============================================================================
 
+        # # # 3.5 [优化] 将 Raster Scan 索引重排为 Block-Major 索引
+        # # # ==============================================================================
+        # # # 你的灵感来源：patches.transpose(0, 3, 6, 4, 7, 2, 1, 5, 8)
+        # # # 但这里我们处理的是 Token 索引，没有 channel 和 patch_size 维度，逻辑简化如下：
+        
+        # # # 1. 还原为 2D 网格 (t, h, w)
+        # indices_grid = restore_indices.view(t, h, w)
+        
+        # # # 2. 拆分维度提取 2x2 Block
+        # # # 原图被切分为 (h//2) * (w//2) 个 2x2 的 Block
+        # # # Shape: [t, h_grid, 2, w_grid, 2]
+        # indices_split = indices_grid.view(t, h // 2, 2, w // 2, 2)
+        
+        # # # 3. 维度重排 (Permute) -> 变成 Block-Major
+        # # # 目标：[t, h_grid, w_grid, 2, 2]
+        # # # 这样内存里就是：[Block0的4个点], [Block1的4个点]...
+        # indices_block_major = indices_split.permute(0, 1, 3, 2, 4).contiguous()
+        
+        # # # 4. 展平
+        # restore_indices = indices_block_major.view(-1)
+
+        # # # ==============================================================================
+        # # # 4. 填充回填 (Broadcasting)
+        # # # ==============================================================================
+        # # # 现在 restore_indices 已经是 Block-Major 的顺序了
+        # # # 取出来的 hidden_states 自然也就是 Block-Major 的，无需再后处理！
+        
         # hidden_states = hidden_states[restore_indices]
-        # eval_logger.info("hidden_states after restore shape: {}", hidden_states.shape)
-        # eval_logger.info(f"Restored hidden_states shape: {hidden_states.shape}") 
-        # 此时 hidden_states 的长度应该恢复到了 t*h*w
-        # eval_logger.info("after blocks hidden_states shape: {}", hidden_states.shape)
+
+        # # hidden_states = hidden_states[restore_indices]
+        # # eval_logger.info("hidden_states after restore shape: {}", hidden_states.shape)
+        # # eval_logger.info(f"Restored hidden_states shape: {hidden_states.shape}") 
+        # # 此时 hidden_states 的长度应该恢复到了 t*h*w
+        # # eval_logger.info("after blocks hidden_states shape: {}", hidden_states.shape)
         return self.merger(hidden_states), grid_thw
         # return hidden_states
 
@@ -2306,13 +2346,13 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
 
         image_embeds, grid_new_thw = self.visual(pixel_values, grid_thw=image_grid_thw, output_dict=output_dict)
 
-        # a = torch.tensor(image_embeds.shape[0], device=image_embeds.device)
-        # split_sizes = (a//self.visual.spatial_merge_size**2).tolist()
-        # split_sizes = [a.item()]
-        # image_embeds = torch.split(image_embeds, split_sizes)
-
-        split_sizes = (image_grid_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
+        a = torch.tensor(image_embeds.shape[0], device=image_embeds.device)
+        split_sizes = (a//self.visual.spatial_merge_size**2).tolist()
+        split_sizes = [a.item()]
         image_embeds = torch.split(image_embeds, split_sizes)
+
+        # split_sizes = (grid_new_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
+        # image_embeds = torch.split(image_embeds, split_sizes)
         return image_embeds, grid_new_thw
 
 
@@ -2403,7 +2443,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         image_grid = image_grid_thw
         if pixel_values is not None:
             image_embeds, image_grid_new_thw = self.get_image_features(pixel_values, image_grid_thw, output_dict, images_output)
-            # image_grid = image_grid_new_thw
+            image_grid = image_grid_new_thw
             image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
             image_mask, _ = self.get_placeholder_mask(
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
@@ -2664,8 +2704,8 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
             if (prefill_compiled_stage or prefill_noncompiled_stage) or self.model.rope_deltas is None:
                 # eval_logger.info("start")
                 # eval_logger.info(f"grid_new_thw: {grid_new_thw is not None} before filter")
-                # if grid_new_thw is not None:
-                #     image_grid_thw = grid_new_thw
+                if grid_new_thw is not None:
+                    image_grid_thw = grid_new_thw
                 # eval_logger.info(f"grid_new_thw: {grid_new_thw} after filter")
                 vision_positions, rope_deltas = self.model.get_rope_index(
                     model_inputs.get("input_ids", None),

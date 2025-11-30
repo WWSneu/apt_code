@@ -172,7 +172,14 @@ class Qwen2VLProcessor(ProcessorMixin):
             index = 0
             for i in range(len(text)):
                 while self.image_token in text[i]:
-                    num_image_tokens = image_grid_thw[index].prod() // merge_length
+                    keep_ratio = 0.25
+                    num_tokens = image_grid_thw[index].prod()
+                    num_keep = int(num_tokens * keep_ratio)
+                    sum = num_keep
+                    if sum%4 !=0:
+                        sum = sum + (4 - sum%4)
+                    num_keep = sum
+                    num_image_tokens = num_keep // merge_length
                     # num_image_tokens = 
                     # eval_logger.info("num_image_tokens: {}", num_image_tokens)
                     # eval_logger.info("image_grid_thw[index].prod(): {}", image_grid_thw[index].prod())
